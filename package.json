@@ -1,0 +1,34 @@
+{
+    "name": "craftsman-dynamic-backend",
+    "version": "1.0.0",
+    "description": "Schema-driven dynamic backend for Craftsman App",
+    "main": "src/server.js",
+    "scripts": {
+        "start": "node src/server.js",
+        "dev": "nodemon src/server.js",
+        "test": "jest"
+    },
+    "dependencies": {
+        "ajv": "^8.17.1",
+        "ajv-formats": "^2.1.1",
+        "cors": "^2.8.5",
+        "dotenv": "^16.3.1",
+        "express": "^4.18.2",
+        "helmet": "^7.0.0",
+        "joi": "^17.11.0",
+        "mongoose": "^7.5.0",
+        "morgan": "^1.10.0"
+    },
+    "devDependencies": {
+        "jest": "^29.6.4",
+        "nodemon": "^3.0.1"
+    },
+    "keywords": [
+        "dynamic-backend",
+        "json-schema",
+        "mongodb",
+        "crud"
+    ],
+    "author": "RubrixCode",
+    "license": "MIT"
+}
