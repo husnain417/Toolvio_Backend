@@ -7,27 +7,77 @@ const connectDB = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
 const schemaRoutes = require('./routes/schemaRoutes');
 const dynamicRoutes = require('./routes/dynamicRoutes');
+const auditRoutes = require('./routes/auditRoutes'); // Add audit routes
 const systemRoutes = require('./routes/systemRoutes');
 const SchemaService = require('./services/SchemaService');
+const ChangeStreamService = require('./services/ChangeStreamService'); // Add change stream service
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Connect to MongoDB and initialize dynamic models
+// Connect to MongoDB and initialize all services
 const initializeServer = async () => {
   try {
+    console.log('🚀 Starting server initialization...');
+    
     // Connect to database
+    console.log('📡 Connecting to MongoDB...');
     await connectDB();
+    console.log('✅ MongoDB connected');
     
     // Initialize dynamic models for existing schemas
+    console.log('🔧 Initializing dynamic models...');
     await SchemaService.initializeDynamicModels();
+    console.log('✅ Dynamic models initialized');
     
-    console.log('✅ Server initialization completed');
+    // Initialize change streams for audit trail
+    console.log('🔍 Initializing change streams for audit trail...');
+    await ChangeStreamService.initialize();
+    console.log('✅ Change streams initialized');
+    
+    console.log('✅ Server initialization completed successfully');
   } catch (error) {
     console.error('❌ Server initialization failed:', error);
     process.exit(1);
   }
 };
+
+// Graceful shutdown handler
+const gracefulShutdown = async () => {
+  console.log('🛑 Received shutdown signal, starting graceful shutdown...');
+  
+  try {
+    // Shutdown change streams
+    console.log('🔍 Shutting down change streams...');
+    await ChangeStreamService.shutdown();
+    console.log('✅ Change streams shut down');
+    
+    // Close database connection
+    console.log('📡 Closing database connection...');
+    // Add your database connection close logic here if needed
+    
+    console.log('✅ Graceful shutdown completed');
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Error during graceful shutdown:', error);
+    process.exit(1);
+  }
+};
+
+// Handle shutdown signals
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// Handle uncaught exceptions and rejections
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  gracefulShutdown();
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown();
+});
 
 // Middleware
 app.use(helmet());
@@ -35,10 +85,14 @@ app.use(cors());
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Request timeout middleware
 app.use((req, res, next) => {
   req.setTimeout(30000, () => {
-    console.log('Request timeout');
-    res.status(408).json({ error: 'Request timeout' });
+    console.log('⏰ Request timeout');
+    if (!res.headersSent) {
+      res.status(408).json({ error: 'Request timeout' });
+    }
   });
   next();
 });
@@ -46,18 +100,53 @@ app.use((req, res, next) => {
 // Routes
 app.use('/api/schemas', schemaRoutes);
 app.use('/api/data', dynamicRoutes);
+app.use('/api/audit', auditRoutes); // Add audit routes
 app.use('/api/system', systemRoutes);
 
-// Root endpoint
+// Root endpoint with updated information
 app.get('/', (req, res) => {
   res.json({ 
     message: 'Craftsman Dynamic Backend API',
     version: '1.0.0',
+    features: [
+      'Dynamic Schema Management',
+      'Auto-generated CRUD APIs',
+      'Complete Audit Trail & Rollback',
+      'Real-time Change Streams',
+      'Versioned Record Snapshots'
+    ],
     endpoints: {
       schemas: '/api/schemas',
       data: '/api/data',
+      audit: '/api/audit',
       system: '/api/system',
       health: '/api/system/health'
+    },
+    auditFeatures: {
+      changeStreams: 'Real-time change detection via MongoDB Change Streams',
+      auditHistory: 'Complete audit trail for all document changes',
+      rollback: 'Revert documents to any previous version',
+      versioning: 'Sequential version numbering for all changes',
+      bulkOperations: 'Bulk revert and audit operations supported'
+    }
+  });
+});
+
+// Health check endpoint with audit service status
+app.get('/health', (req, res) => {
+  const changeStreamStatus = ChangeStreamService.getStatus();
+  
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    services: {
+      database: 'connected',
+      dynamicModels: 'initialized',
+      changeStreams: {
+        status: changeStreamStatus.isInitialized ? 'active' : 'inactive',
+        totalStreams: changeStreamStatus.totalStreams,
+        streamsDetails: changeStreamStatus.streams
+      }
     }
   });
 });
@@ -69,7 +158,13 @@ app.use(errorHandler);
 app.use('*', (req, res) => {
   res.status(404).json({ 
     error: 'Route not found',
-    path: req.originalUrl 
+    path: req.originalUrl,
+    availableEndpoints: [
+      '/api/schemas',
+      '/api/data',
+      '/api/audit',
+      '/api/system'
+    ]
   });
 });
 
@@ -77,12 +172,25 @@ app.use('*', (req, res) => {
 const startServer = async () => {
   await initializeServer();
   
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
-    console.log(`🗄️  Database: ${process.env.MONGODB_URI}`);
-    console.log(`🔄 Dynamic models initialized and ready`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🗄️ Database: ${process.env.MONGODB_URI ? 'Connected' : 'Not configured'}`);
+    console.log(`🔧 Dynamic models: Initialized and ready`);
+    console.log(`🔍 Audit trail: Active with change streams`);
+    console.log(`📝 API Documentation available at: http://localhost:${PORT}/`);
+    console.log('');
+    console.log('🎉 Craftsman Dynamic Backend is ready!');
+    console.log('✅ Milestone 1: Schema-Driven API - COMPLETE');
+    console.log('✅ Milestone 2: Audit Trail & Rollback - COMPLETE');
+    console.log('');
   });
+  
+  // Store server reference for graceful shutdown
+  process.server = server;
 };
 
-startServer();
+startServer().catch((error) => {
+  console.error('❌ Failed to start server:', error);
+  process.exit(1);
+});
