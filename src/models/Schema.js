@@ -35,8 +35,12 @@ const SchemaDefinitionSchema = new mongoose.Schema({
         // At least one property must exist
         if (Object.keys(v.properties).length === 0) return false;
         
-        // Validate each property has a valid type
+        // Validate each property has a valid type or $ref
         for (const [propName, propDef] of Object.entries(v.properties)) {
+          if (propDef.$ref) {
+            // $ref properties are valid
+            continue;
+          }
           if (!propDef.type || !['string', 'number', 'integer', 'boolean', 'array', 'object'].includes(propDef.type)) {
             return false;
           }
@@ -44,9 +48,29 @@ const SchemaDefinitionSchema = new mongoose.Schema({
         
         return true;
       },
-      message: 'jsonSchema must be a valid JSON Schema with type "object", properties, and valid field types'
+      message: 'jsonSchema must be a valid JSON Schema with type "object", properties, and valid field types or $ref'
     }
   },
+  // Track relationships between schemas for change propagation
+  relationships: [{
+    field: {
+      type: String,
+      required: true
+    },
+    referencedSchema: {
+      type: String,
+      required: true
+    },
+    referenceType: {
+      type: String,
+      enum: ['reference', 'array_reference'],
+      default: 'reference'
+    },
+    isRequired: {
+      type: Boolean,
+      default: false
+    }
+  }],
   version: {
     type: String,
     default: '1.0.0'
@@ -82,6 +106,61 @@ SchemaDefinitionSchema.pre('save', function(next) {
   // Always ensure collectionName is set
   if (!this.collectionName || this.isNew || this.isModified('name')) {
     this.collectionName = `dynamic_${this.name}`;
+  }
+  next();
+});
+
+// Extract relationships from JSON Schema
+SchemaDefinitionSchema.pre('save', function(next) {
+  if (this.jsonSchema && this.jsonSchema.properties) {
+    const relationships = [];
+    
+    for (const [fieldName, fieldDef] of Object.entries(this.jsonSchema.properties)) {
+      // Check for x-ref property (new approach)
+      if (fieldDef['x-ref']) {
+        relationships.push({
+          field: fieldName,
+          referencedSchema: fieldDef['x-ref'],
+          referenceType: fieldDef['x-ref-type'] === 'array' || fieldDef.type === 'array' ? 'array_reference' : 'reference',
+          isRequired: this.jsonSchema.required && this.jsonSchema.required.includes(fieldName)
+        });
+      }
+      
+      // Check array items for x-ref
+      if (fieldDef.type === 'array' && fieldDef.items && fieldDef.items['x-ref']) {
+        relationships.push({
+          field: fieldName,
+          referencedSchema: fieldDef.items['x-ref'],
+          referenceType: 'array_reference',
+          isRequired: this.jsonSchema.required && this.jsonSchema.required.includes(fieldName)
+        });
+      }
+      
+      // Keep backward compatibility with $ref
+      if (fieldDef.$ref) {
+        const refPath = fieldDef.$ref;
+        let referencedSchema = '';
+        
+        if (refPath.startsWith('#/definitions/')) {
+          referencedSchema = refPath.replace('#/definitions/', '');
+        } else if (refPath.startsWith('#/')) {
+          referencedSchema = refPath.replace('#/', '');
+        } else {
+          referencedSchema = refPath;
+        }
+        
+        if (referencedSchema) {
+          relationships.push({
+            field: fieldName,
+            referencedSchema: referencedSchema,
+            referenceType: fieldDef.items ? 'array_reference' : 'reference',
+            isRequired: this.jsonSchema.required && this.jsonSchema.required.includes(fieldName)
+          });
+        }
+      }
+    }
+    
+    this.relationships = relationships;
   }
   next();
 });

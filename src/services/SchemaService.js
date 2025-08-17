@@ -120,15 +120,24 @@ class SchemaService {
       throw new Error(`Schema '${name}' not found`);
     }
 
-    // Soft delete - mark as inactive
-    await SchemaDefinition.findOneAndUpdate(
-      { name },
-      { isActive: false }
-    );
+    // Hard delete - completely remove the schema
+    await SchemaDefinition.findOneAndDelete({ name });
+    
+    // Also remove the dynamic collection if it exists
+    try {
+      const Model = CollectionGenerator.getDynamicModel(name);
+      if (Model) {
+        await Model.collection.drop();
+        console.log(`🗑️  Dropped collection for schema: ${name}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️  Could not drop collection for schema ${name}:`, error.message);
+    }
 
-    // Remove dynamic model
+    // Remove dynamic model from memory
     CollectionGenerator.removeDynamicModel(name);
 
+    console.log(`✅ Schema '${name}' deleted successfully`);
     return true;
   }
 

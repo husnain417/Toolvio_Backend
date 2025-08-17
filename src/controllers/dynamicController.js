@@ -14,7 +14,7 @@ class DynamicController {
   async getRecords(req, res) {
     try {
       const { schemaName } = req.params;
-      const { page, limit, sort, includeAudit, ...filter } = req.query;
+      const { page, limit, sort, includeAudit, populate, ...filter } = req.query;
       
       console.log('Raw filter from query:', filter);
       
@@ -46,6 +46,11 @@ class DynamicController {
         limit: parseInt(limit) || 10,
         filter: processedFilter
       };
+
+      // Handle population parameter
+      if (populate) {
+        options.populate = populate.split(',').map(field => field.trim());
+      }
       
       // Handle sort parameter
       if (sort) {
@@ -78,7 +83,12 @@ class DynamicController {
   async getRecordById(req, res) {
     try {
       const { schemaName, recordId } = req.params;
-      const record = await DynamicCrudService.getRecordById(schemaName, recordId);
+      const { populate } = req.query;
+      
+      // Parse population fields
+      const populateFields = populate ? populate.split(',').map(field => field.trim()) : [];
+      
+      const record = await DynamicCrudService.getRecordById(schemaName, recordId, populateFields);
       
       if (!record) {
         return errorResponse(res, `Record with ID '${recordId}' not found`, 404);

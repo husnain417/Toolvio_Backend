@@ -2,6 +2,8 @@ const CollectionGenerator = require('./CollectionGenerator');
 const SchemaService = require('./SchemaService');
 const AuditService = require('./AuditService');
 const schemaValidator = require('../utils/schemaValidator');
+const ReferenceResolver = require('./ReferenceResolver');
+const ChangePropagation = require('./ChangePropagation');
 
 class DynamicCrudService {
   /**
@@ -32,6 +34,13 @@ class DynamicCrudService {
       if (!validation.valid) {
         const errors = schemaValidator.formatErrors(validation.errors);
         throw new Error(`Validation failed: ${errors.map(e => `${e.field}: ${e.message}`).join(', ')}`);
+      }
+
+      console.log('Step 2.5: Validating references...');
+      const referenceValidation = await ReferenceResolver.validateReferences(schemaName, data);
+      if (!referenceValidation.valid) {
+        const errors = referenceValidation.errors.map(e => `${e.field}: ${e.message}`);
+        throw new Error(`Reference validation failed: ${errors.join(', ')}`);
       }
   
       console.log('Step 3: Getting dynamic model...');
@@ -81,6 +90,15 @@ class DynamicCrudService {
       console.log('Step 8: Converting to object...');
       const result = savedRecord.toObject();
       console.log('Final result:', JSON.stringify(result, null, 2));
+
+      console.log('Step 9: Tracking dependencies...');
+      try {
+        await ChangePropagation.trackDependencies(schemaName, savedRecord._id, data);
+        console.log('Dependencies tracked successfully');
+      } catch (dependencyError) {
+        console.warn('Failed to track dependencies:', dependencyError.message);
+        // Don't fail the operation if dependency tracking fails
+      }
   
       return result;
     } catch (error) {
@@ -111,6 +129,13 @@ class DynamicCrudService {
       if (!validation.valid) {
         const errors = schemaValidator.formatErrors(validation.errors);
         throw new Error(`Validation failed: ${errors.map(e => `${e.field}: ${e.message}`).join(', ')}`);
+      }
+
+      // Validate references in update data
+      const referenceValidation = await ReferenceResolver.validateReferences(schemaName, updateData);
+      if (!referenceValidation.valid) {
+        const errors = referenceValidation.errors.map(e => `${e.field}: ${e.message}`);
+        throw new Error(`Reference validation failed: ${errors.join(', ')}`);
       }
 
       const Model = CollectionGenerator.getDynamicModel(schemaName);
@@ -159,6 +184,16 @@ class DynamicCrudService {
         console.log('Update audit trail logged successfully');
       } catch (auditError) {
         console.warn('Failed to log update audit trail:', auditError.message);
+      }
+
+      // Propagate changes to dependent records
+      try {
+        console.log('Propagating changes to dependent records...');
+        const propagationResult = await ChangePropagation.propagateChanges(schemaName, recordId, updateData);
+        console.log('Change propagation result:', propagationResult);
+      } catch (propagationError) {
+        console.warn('Failed to propagate changes:', propagationError.message);
+        // Don't fail the operation if change propagation fails
       }
 
       return updatedRecord.toObject();
@@ -254,7 +289,8 @@ class DynamicCrudService {
       page = 1,
       limit = 10,
       sort = { createdAt: -1 },
-      filter = {}
+      filter = {},
+      populate = []
     } = options;
 
     // Build query
@@ -268,11 +304,21 @@ class DynamicCrudService {
     const totalPages = Math.ceil(total / limit);
 
     // Fetch records
-    const records = await Model.find(query)
+    let records = await Model.find(query)
       .sort(sort)
       .skip(skip)
       .limit(limit)
       .lean();
+
+    // Resolve references if population is requested
+    if (populate.length > 0) {
+      const populatedRecords = [];
+      for (const record of records) {
+        const populatedRecord = await ReferenceResolver.resolveReferences(schemaName, record, populate);
+        populatedRecords.push(populatedRecord);
+      }
+      records = populatedRecords;
+    }
 
     return {
       records,
@@ -293,7 +339,7 @@ class DynamicCrudService {
    * @param {string} recordId - Record ID
    * @returns {Promise<Object|null>} - Record or null
    */
-  async getRecordById(schemaName, recordId) {
+  async getRecordById(schemaName, recordId, populateFields = []) {
     const schema = await SchemaService.getSchemaByName(schemaName);
     if (!schema) {
       throw new Error(`Schema '${schemaName}' not found`);
@@ -304,7 +350,13 @@ class DynamicCrudService {
       throw new Error(`Dynamic model for schema '${schemaName}' not found`);
     }
 
-    const record = await Model.findOne({ _id: recordId, _schemaName: schemaName }).lean();
+    let record = await Model.findOne({ _id: recordId, _schemaName: schemaName }).lean();
+    
+    if (record && populateFields.length > 0) {
+      // Resolve references if population is requested
+      record = await ReferenceResolver.resolveReferences(schemaName, record, populateFields);
+    }
+    
     return record;
   }
 

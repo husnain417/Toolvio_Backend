@@ -38,7 +38,36 @@ class SchemaValidator {
         };
       }
 
-      // Try to compile the schema
+      // Validate properties with support for $ref
+      for (const [propName, propDef] of Object.entries(jsonSchema.properties)) {
+        if (propDef.$ref) {
+          // Validate $ref format
+          if (typeof propDef.$ref !== 'string') {
+            return {
+              valid: false,
+              errors: [{ message: `Property '${propName}' has invalid $ref format` }]
+            };
+          }
+          
+          // Check if $ref points to definitions if definitions exist
+          if (propDef.$ref.startsWith('#/definitions/') && jsonSchema.definitions) {
+            const refName = propDef.$ref.replace('#/definitions/', '');
+            if (!jsonSchema.definitions[refName]) {
+              return {
+                valid: false,
+                errors: [{ message: `Property '${propName}' references undefined definition '${refName}'` }]
+              };
+            }
+          }
+        } else if (!propDef.type) {
+          return {
+            valid: false,
+            errors: [{ message: `Property '${propName}' must have either 'type' or '$ref'` }]
+          };
+        }
+      }
+
+      // Try to compile the schema with AJV
       const validate = this.ajv.compile(jsonSchema);
       
       return { valid: true, errors: [] };
