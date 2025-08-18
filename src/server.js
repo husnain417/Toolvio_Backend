@@ -11,6 +11,10 @@ const auditRoutes = require('./routes/auditRoutes'); // Add audit routes
 const systemRoutes = require('./routes/systemRoutes');
 const SchemaService = require('./services/SchemaService');
 const ChangeStreamService = require('./services/ChangeStreamService'); // Add change stream service
+const swaggerUi = require('swagger-ui-express');
+const fs = require('fs');
+const path = require('path');
+const YAML = require('yaml');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -102,6 +106,30 @@ app.use('/api/schemas', schemaRoutes);
 app.use('/api/data', dynamicRoutes);
 app.use('/api/audit', auditRoutes); // Add audit routes
 app.use('/api/system', systemRoutes);
+
+// Swagger UI docs
+try {
+  const openapiPath = path.join(__dirname, '..', 'documentation', 'openapi.yaml');
+  const file = fs.readFileSync(openapiPath, 'utf8');
+  const swaggerDocument = YAML.parse(file);
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+  console.log('📚 Swagger UI available at /api/docs');
+} catch (e) {
+  console.warn('⚠️  Failed to load Swagger docs:', e.message);
+  // Mount fallback minimal docs so the route still works
+  const fallbackDoc = {
+    openapi: '3.0.3',
+    info: {
+      title: 'Craftsman Dynamic Backend API (Fallback Docs)',
+      version: '1.0.0',
+      description: 'OpenAPI file missing or invalid. Ensure documentation/openapi.yaml exists.'
+    },
+    servers: [{ url: `http://localhost:${PORT}` }],
+    paths: {}
+  };
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(fallbackDoc));
+  console.log('📚 Swagger UI (fallback) available at /api/docs');
+}
 
 // Root endpoint with updated information
 app.get('/', (req, res) => {

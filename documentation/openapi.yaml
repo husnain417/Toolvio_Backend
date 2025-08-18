@@ -1,0 +1,389 @@
+openapi: 3.0.3
+info:
+  title: Craftsman Dynamic Backend API
+  version: 1.0.0
+  description: |
+    Interactive API documentation for System, Schema, and Dynamic Data endpoints.
+    Use the "Try it out" button to execute requests against your local server.
+servers:
+  - url: http://localhost:{port}
+    description: Local server
+    variables:
+      port:
+        default: "3000"
+paths:
+  /api/system/health:
+    get:
+      tags: [System]
+      summary: Health check
+      responses:
+        '200':
+          description: System health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+  /api/system/info:
+    get:
+      tags: [System]
+      summary: System information
+      responses:
+        '200':
+          description: System information summary
+  /api/system/stats/database:
+    get:
+      tags: [System]
+      summary: Database statistics
+      responses:
+        '200':
+          description: Database stats
+  /api/system/stats/api:
+    get:
+      tags: [System]
+      summary: API statistics
+      responses:
+        '200':
+          description: API stats
+  /api/system/init:
+    post:
+      tags: [System]
+      summary: Initialize system services
+      responses:
+        '200':
+          description: Initialization result
+  /api/system/logs:
+    get:
+      tags: [System]
+      summary: System logs
+      responses:
+        '200':
+          description: Recent logs
+
+  /api/schemas:
+    get:
+      tags: [Schemas]
+      summary: Get all schemas
+      parameters:
+        - in: query
+          name: active
+          schema: { type: boolean }
+          description: Only active schemas when true
+      responses:
+        '200':
+          description: List of schemas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SchemaDefinition'
+    post:
+      tags: [Schemas]
+      summary: Create new schema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SchemaDefinitionInput'
+            examples:
+              basic:
+                value:
+                  name: product
+                  displayName: Product
+                  description: Catalog product
+                  jsonSchema:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      price: { type: number, minimum: 0 }
+                    required: [name, price]
+      responses:
+        '201':
+          description: Schema created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaDefinition'
+
+  /api/schemas/validate:
+    post:
+      tags: [Schemas]
+      summary: Validate a JSON Schema definition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                jsonSchema:
+                  type: object
+      responses:
+        '200': { description: Validation result }
+
+  /api/schemas/{name}:
+    get:
+      tags: [Schemas]
+      summary: Get schema by name
+      parameters:
+        - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
+      responses:
+        '200':
+          description: Schema details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaDefinition'
+    put:
+      tags: [Schemas]
+      summary: Update schema
+      parameters:
+        - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SchemaUpdateInput'
+      responses:
+        '200': { description: Updated schema }
+    delete:
+      tags: [Schemas]
+      summary: Delete schema
+      parameters:
+        - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
+      responses:
+        '200': { description: Deleted }
+
+  /api/schemas/{name}/reload:
+    post:
+      tags: [Schemas]
+      summary: Hot reload schema
+      parameters:
+        - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
+      responses:
+        '200': { description: Reloaded }
+
+  /api/schemas/{name}/stats:
+    get:
+      tags: [Schemas]
+      summary: Get schema stats
+      parameters:
+        - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
+      responses:
+        '200': { description: Stats }
+
+  /api/data/{schemaName}:
+    get:
+      tags: [Dynamic]
+      summary: Get records for schema
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/IncludeAudit'
+        - $ref: '#/components/parameters/Populate'
+      responses:
+        '200':
+          description: Paginated records
+    post:
+      tags: [Dynamic]
+      summary: Create record
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            examples:
+              default:
+                summary: Example record
+                value:
+                  name: Smartphone
+                  price: 699.99
+
+  /api/data/{schemaName}/count:
+    get:
+      tags: [Dynamic]
+      summary: Get record count
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+      responses:
+        '200': { description: Count }
+
+  /api/data/{schemaName}/stats:
+    get:
+      tags: [Dynamic]
+      summary: Get record statistics
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+      responses:
+        '200': { description: Stats }
+
+  /api/data/{schemaName}/search:
+    get:
+      tags: [Dynamic]
+      summary: Search records
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+      responses:
+        '200': { description: Search results }
+
+  /api/data/{schemaName}/bulk:
+    post:
+      tags: [Dynamic]
+      summary: Bulk create records
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+      responses:
+        '201': { description: Created }
+
+  /api/data/{schemaName}/{recordId}:
+    get:
+      tags: [Dynamic]
+      summary: Get record by ID
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/RecordId'
+        - $ref: '#/components/parameters/Populate'
+      responses:
+        '200': { description: Record }
+        '404': { description: Not found }
+    put:
+      tags: [Dynamic]
+      summary: Update record by ID
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/RecordId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { description: Updated }
+    patch:
+      tags: [Dynamic]
+      summary: Patch record by ID
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/RecordId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Dynamic]
+      summary: Delete record by ID
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/RecordId'
+      responses:
+        '200': { description: Deleted }
+
+components:
+  parameters:
+    SchemaName:
+      in: path
+      name: schemaName
+      required: true
+      schema: { type: string }
+      description: Dynamic schema name
+    SchemaName_SchemaRoutes:
+      in: path
+      name: name
+      required: true
+      schema: { type: string }
+      description: Schema name (for schema routes)
+    RecordId:
+      in: path
+      name: recordId
+      required: true
+      schema: { type: string }
+      description: Record identifier
+    Page:
+      in: query
+      name: page
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+    Sort:
+      in: query
+      name: sort
+      schema: { type: string }
+      description: 'JSON string of sort object. Example: {"createdAt": -1}'
+    IncludeAudit:
+      in: query
+      name: includeAudit
+      schema: { type: boolean, default: false }
+    Populate:
+      in: query
+      name: populate
+      schema: { type: string }
+      description: Comma-separated fields to populate (references)
+
+  schemas:
+    SchemaDefinition:
+      type: object
+      properties:
+        name: { type: string }
+        displayName: { type: string }
+        description: { type: string }
+        collectionName: { type: string }
+        isActive: { type: boolean }
+        jsonSchema:
+          type: object
+    SchemaDefinitionInput:
+      type: object
+      required: [name, displayName, jsonSchema]
+      properties:
+        name: { type: string }
+        displayName: { type: string }
+        description: { type: string }
+        jsonSchema:
+          type: object
+          description: JSON Schema for this entity
+    SchemaUpdateInput:
+      type: object
+      properties:
+        displayName: { type: string }
+        description: { type: string }
+        jsonSchema: { type: object }
+
