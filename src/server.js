@@ -1,4 +1,13 @@
 require('dotenv').config();
+
+// Load local config as fallback for development
+const localConfig = require('../config.local');
+Object.keys(localConfig).forEach(key => {
+  if (!process.env[key]) {
+    process.env[key] = localConfig[key];
+  }
+});
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -9,6 +18,7 @@ const schemaRoutes = require('./routes/schemaRoutes');
 const dynamicRoutes = require('./routes/dynamicRoutes');
 const auditRoutes = require('./routes/auditRoutes'); // Add audit routes
 const systemRoutes = require('./routes/systemRoutes');
+const authRoutes = require('./routes/authRoutes'); // Add authentication routes
 const SchemaService = require('./services/SchemaService');
 const ChangeStreamService = require('./services/ChangeStreamService'); // Add change stream service
 const swaggerUi = require('swagger-ui-express');
@@ -85,7 +95,19 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+
+// Enhanced CORS configuration for Swagger UI
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:5000', 'http://127.0.0.1:3000', 'http://127.0.0.1:5000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Length', 'X-Total-Count', 'X-Page-Count']
+}));
+
+// Handle preflight requests
+app.options('*', cors());
+
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -102,6 +124,7 @@ app.use((req, res, next) => {
 });
 
 // Routes
+app.use('/api/auth', authRoutes); // Authentication routes
 app.use('/api/schemas', schemaRoutes);
 app.use('/api/data', dynamicRoutes);
 app.use('/api/audit', auditRoutes); // Add audit routes
@@ -112,7 +135,25 @@ try {
   const openapiPath = path.join(__dirname, '..', 'documentation', 'openapi.yaml');
   const file = fs.readFileSync(openapiPath, 'utf8');
   const swaggerDocument = YAML.parse(file);
-  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+  // Serve Swagger JSON
+  app.get('/api/docs/swagger.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(swaggerDocument);
+  });
+
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+    swaggerOptions: {
+      url: '/api/docs/swagger.json',
+      validatorUrl: null,
+      supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch'],
+      docExpansion: 'list',
+      filter: true,
+      showRequestHeaders: true,
+      tryItOutEnabled: true
+    },
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: 'Toolvio Backend API Documentation'
+  }));
   console.log('📚 Swagger UI available at /api/docs');
 } catch (e) {
   console.warn('⚠️  Failed to load Swagger docs:', e.message);

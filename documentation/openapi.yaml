@@ -1,75 +1,263 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
-  title: Craftsman Dynamic Backend API
+  title: Toolvio Backend API - RBAC & Dynamic Schema System
   version: 1.0.0
   description: |
-    Interactive API documentation for System, Schema, and Dynamic Data endpoints.
+    Comprehensive API documentation for Toolvio Backend with Role-Based Access Control (RBAC),
+    Dynamic Schema Management, Audit Trail, and Multi-tenant Support.
+    
+    ## 🔐 Authentication
+    Most endpoints require JWT authentication. Use the `/api/auth/login` endpoint to get a token,
+    then include it in the Authorization header as `Bearer <token>`.
+    
+    ## 👥 User Roles
+    - **Admin**: Full access to all features
+    - **Office**: Can manage schemas and data, read audit logs
+    - **Technician**: Can read schemas, manage data, read audit logs
+    - **Customer**: Can only read data (no schema or audit access)
+    
+    ## 🏢 Multi-tenant
+    All data is isolated by tenant. Users can only access data within their assigned tenant.
+    
     Use the "Try it out" button to execute requests against your local server.
+
 servers:
   - url: http://localhost:{port}
     description: Local server
     variables:
       port:
         default: "3000"
+
 paths:
-  /api/system/health:
-    get:
-      tags: [System]
-      summary: Health check
+  # Authentication Routes
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: User login
+      description: Authenticate user with username/email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: System health status
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid request data
+        '401':
+          description: Authentication failed
+        '403':
+          description: Account locked or tenant inactive
+
+  /api/auth/register:
+    post:
+      tags: [Authentication]
+      summary: User registration
+      description: Create a new user account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid request data or user already exists
+        '403':
+          description: Tenant inactive or user limit reached
+
+  /api/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh authentication token
+      description: Get a new token using current valid token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Token required
+        '401':
+          description: Invalid or expired token
+
+  /api/auth/profile:
+    get:
+      tags: [Authentication]
+      summary: Get user profile
+      description: Retrieve current user's profile information
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profile retrieved successfully
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  status:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/UserProfile'
+                  message:
                     type: string
-                    example: healthy
-                  timestamp:
+        '401':
+          description: Authentication required
+    put:
+      tags: [Authentication]
+      summary: Update user profile
+      description: Update current user's profile information
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                  description: New first name
+                lastName:
+                  type: string
+                  description: New last name
+                email:
+                  type: string
+                  format: email
+                  description: New email address
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/UserProfile'
+                  message:
                     type: string
-                    format: date-time
-  /api/system/info:
-    get:
-      tags: [System]
-      summary: System information
-      responses:
-        '200':
-          description: System information summary
-  /api/system/stats/database:
-    get:
-      tags: [System]
-      summary: Database statistics
-      responses:
-        '200':
-          description: Database stats
-  /api/system/stats/api:
-    get:
-      tags: [System]
-      summary: API statistics
-      responses:
-        '200':
-          description: API stats
-  /api/system/init:
-    post:
-      tags: [System]
-      summary: Initialize system services
-      responses:
-        '200':
-          description: Initialization result
-  /api/system/logs:
-    get:
-      tags: [System]
-      summary: System logs
-      responses:
-        '200':
-          description: Recent logs
+        '400':
+          description: Invalid request data
+        '401':
+          description: Authentication required
 
+  /api/auth/change-password:
+    post:
+      tags: [Authentication]
+      summary: Change user password
+      description: Change current user's password
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed successfully
+        '400':
+          description: Invalid request data or incorrect current password
+        '401':
+          description: Authentication required
+
+  /api/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: User logout
+      description: Logout current user (client-side token removal)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logout successful
+        '401':
+          description: Authentication required
+
+  /api/auth/tenant:
+    get:
+      tags: [Authentication]
+      summary: Get tenant information
+      description: Retrieve current user's tenant information
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Tenant information retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/TenantInfo'
+                  message:
+                    type: string
+        '401':
+          description: Authentication required
+        '404':
+          description: Tenant not found
+
+  /api/auth/validate:
+    get:
+      tags: [Authentication]
+      summary: Validate authentication token
+      description: Check if current token is valid and return user info
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/UserProfile'
+                  message:
+                    type: string
+        '401':
+          description: Invalid or expired token
+
+  # Schema Management Routes
   /api/schemas:
     get:
       tags: [Schemas]
       summary: Get all schemas
+      description: Retrieve all schemas (requires schema read permission)
+      security:
+        - BearerAuth: []
       parameters:
         - in: query
           name: active
@@ -88,9 +276,16 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/SchemaDefinition'
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
     post:
       tags: [Schemas]
       summary: Create new schema
+      description: Create a new schema (requires schema write permission + admin/office role)
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -116,11 +311,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SchemaDefinition'
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
 
   /api/schemas/validate:
     post:
       tags: [Schemas]
       summary: Validate a JSON Schema definition
+      description: Validate a JSON Schema (requires schema read permission)
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -131,12 +333,20 @@ paths:
                 jsonSchema:
                   type: object
       responses:
-        '200': { description: Validation result }
+        '200': 
+          description: Validation result
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
 
   /api/schemas/{name}:
     get:
       tags: [Schemas]
       summary: Get schema by name
+      description: Retrieve a specific schema (requires schema read permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
       responses:
@@ -146,9 +356,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SchemaDefinition'
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404':
+          description: Schema not found
     put:
       tags: [Schemas]
       summary: Update schema
+      description: Update a schema (requires schema write permission + admin/office role)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
       requestBody:
@@ -158,37 +377,78 @@ paths:
             schema:
               $ref: '#/components/schemas/SchemaUpdateInput'
       responses:
-        '200': { description: Updated schema }
+        '200': 
+          description: Updated schema
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404':
+          description: Schema not found
     delete:
       tags: [Schemas]
       summary: Delete schema
+      description: Delete a schema (requires schema delete permission + admin role only)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
       responses:
-        '200': { description: Deleted }
+        '200': 
+          description: Schema deleted
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404':
+          description: Schema not found
 
   /api/schemas/{name}/reload:
     post:
       tags: [Schemas]
       summary: Hot reload schema
+      description: Hot reload a schema (requires schema write permission + admin/office role)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
       responses:
-        '200': { description: Reloaded }
+        '200': 
+          description: Schema reloaded
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404':
+          description: Schema not found
 
   /api/schemas/{name}/stats:
     get:
       tags: [Schemas]
       summary: Get schema stats
+      description: Get statistics for a schema (requires schema read permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName_SchemaRoutes'
       responses:
-        '200': { description: Stats }
+        '200': 
+          description: Schema statistics
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404':
+          description: Schema not found
 
+  # Dynamic Data Routes
   /api/data/{schemaName}:
     get:
       tags: [Dynamic]
       summary: Get records for schema
+      description: Retrieve records for a schema (requires data read permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
         - $ref: '#/components/parameters/Page'
@@ -199,9 +459,16 @@ paths:
       responses:
         '200':
           description: Paginated records
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
     post:
       tags: [Dynamic]
       summary: Create record
+      description: Create a new record (requires data write permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
       requestBody:
@@ -217,41 +484,75 @@ paths:
                 value:
                   name: Smartphone
                   price: 699.99
+      responses:
+        '201':
+          description: Record created
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
 
   /api/data/{schemaName}/count:
     get:
       tags: [Dynamic]
       summary: Get record count
+      description: Get count of records (requires data read permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
       responses:
-        '200': { description: Count }
+        '200': 
+          description: Record count
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
 
   /api/data/{schemaName}/stats:
     get:
       tags: [Dynamic]
       summary: Get record statistics
+      description: Get statistics for records (requires data read permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
       responses:
-        '200': { description: Stats }
+        '200': 
+          description: Record statistics
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
 
   /api/data/{schemaName}/search:
     get:
       tags: [Dynamic]
       summary: Search records
+      description: Search records in a schema (requires data read permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Sort'
       responses:
-        '200': { description: Search results }
+        '200': 
+          description: Search results
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
 
   /api/data/{schemaName}/bulk:
     post:
       tags: [Dynamic]
       summary: Bulk create records
+      description: Create multiple records at once (requires data write permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
       requestBody:
@@ -264,22 +565,39 @@ paths:
                 type: object
                 additionalProperties: true
       responses:
-        '201': { description: Created }
+        '201': 
+          description: Records created
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
 
   /api/data/{schemaName}/{recordId}:
     get:
       tags: [Dynamic]
       summary: Get record by ID
+      description: Retrieve a specific record (requires data read permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
         - $ref: '#/components/parameters/RecordId'
         - $ref: '#/components/parameters/Populate'
       responses:
-        '200': { description: Record }
-        '404': { description: Not found }
+        '200': 
+          description: Record details
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404': 
+          description: Record not found
     put:
       tags: [Dynamic]
       summary: Update record by ID
+      description: Update a record (requires data write permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
         - $ref: '#/components/parameters/RecordId'
@@ -291,10 +609,20 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '200': { description: Updated }
+        '200': 
+          description: Record updated
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404': 
+          description: Record not found
     patch:
       tags: [Dynamic]
       summary: Patch record by ID
+      description: Partially update a record (requires data write permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
         - $ref: '#/components/parameters/RecordId'
@@ -306,17 +634,188 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '200': { description: Updated }
+        '200': 
+          description: Record updated
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404': 
+          description: Record not found
     delete:
       tags: [Dynamic]
       summary: Delete record by ID
+      description: Delete a record (requires data delete permission)
+      security:
+        - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/SchemaName'
         - $ref: '#/components/parameters/RecordId'
       responses:
-        '200': { description: Deleted }
+        '200': 
+          description: Record deleted
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+        '404': 
+          description: Record not found
+
+  # Audit Routes
+  /api/audit/{schemaName}/history:
+    get:
+      tags: [Audit]
+      summary: Get schema audit history
+      description: Retrieve audit history for a specific schema (requires audit read permission)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Audit history retrieved
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+
+  /api/audit/{schemaName}/stats:
+    get:
+      tags: [Audit]
+      summary: Get audit statistics
+      description: Retrieve audit statistics for a schema (requires audit read permission)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+      responses:
+        '200':
+          description: Audit statistics retrieved
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+
+  /api/audit/{schemaName}/{recordId}/history:
+    get:
+      tags: [Audit]
+      summary: Get document audit history
+      description: Retrieve audit history for a specific document (requires audit read permission)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/RecordId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Document audit history retrieved
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+
+  /api/audit/{schemaName}/{recordId}/revert/{version}:
+    post:
+      tags: [Audit]
+      summary: Revert document to version
+      description: Revert a document to a specific version (requires audit rollback permission)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SchemaName'
+        - $ref: '#/components/parameters/RecordId'
+        - in: path
+          name: version
+          required: true
+          schema:
+            type: integer
+          description: Version number to revert to
+      responses:
+        '200':
+          description: Document reverted successfully
+        '401':
+          description: Authentication required
+        '403':
+          description: Insufficient permissions
+
+  # System Routes
+  /api/system/health:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Check system health status
+      responses:
+        '200':
+          description: System health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/system/info:
+    get:
+      tags: [System]
+      summary: System information
+      description: Get system information summary
+      responses:
+        '200':
+          description: System information summary
+
+  /api/system/stats/database:
+    get:
+      tags: [System]
+      summary: Database statistics
+      description: Get database statistics
+      responses:
+        '200':
+          description: Database stats
+
+  /api/system/stats/api:
+    get:
+      tags: [System]
+      summary: API statistics
+      description: Get API usage statistics
+      responses:
+        '200':
+          description: API stats
+
+  /api/system/init:
+    post:
+      tags: [System]
+      summary: Initialize system services
+      description: Initialize system services and components
+      responses:
+        '200':
+          description: Initialization result
+
+  /api/system/logs:
+    get:
+      tags: [System]
+      summary: System logs
+      description: Get recent system logs
+      responses:
+        '200':
+          description: Recent logs
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from /api/auth/login endpoint
+
   parameters:
     SchemaName:
       in: path
@@ -360,6 +859,185 @@ components:
       description: Comma-separated fields to populate (references)
 
   schemas:
+    # Authentication Schemas
+    LoginRequest:
+      type: object
+      required:
+        - identifier
+        - password
+        - tenantId
+      properties:
+        identifier:
+          type: string
+          description: Username or email address
+          example: "admin"
+        password:
+          type: string
+          description: User password
+          example: "admin123456"
+        tenantId:
+          type: string
+          description: Tenant identifier
+          example: "test-tenant"
+
+    RegisterRequest:
+      type: object
+      required:
+        - username
+        - email
+        - password
+        - firstName
+        - lastName
+        - tenantId
+      properties:
+        username:
+          type: string
+          description: Unique username
+          example: "john.doe"
+        email:
+          type: string
+          format: email
+          description: User email address
+          example: "john.doe@example.com"
+        password:
+          type: string
+          minLength: 8
+          description: User password (minimum 8 characters)
+          example: "securePassword123"
+        firstName:
+          type: string
+          description: User's first name
+          example: "John"
+        lastName:
+          type: string
+          description: User's last name
+          example: "Doe"
+        role:
+          type: string
+          enum: [admin, office, technician, customer]
+          default: customer
+          description: User role
+          example: "technician"
+        tenantId:
+          type: string
+          description: Tenant identifier
+          example: "test-tenant"
+
+    ChangePasswordRequest:
+      type: object
+      required:
+        - currentPassword
+        - newPassword
+      properties:
+        currentPassword:
+          type: string
+          description: Current password
+          example: "currentPassword123"
+        newPassword:
+          type: string
+          minLength: 8
+          description: New password (minimum 8 characters)
+          example: "newPassword123"
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - token
+      properties:
+        token:
+          type: string
+          description: Current JWT token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    UserProfile:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: User ID
+        username:
+          type: string
+          description: Username
+        email:
+          type: string
+          format: email
+          description: Email address
+        firstName:
+          type: string
+          description: First name
+        lastName:
+          type: string
+          description: Last name
+        role:
+          type: string
+          enum: [admin, office, technician, customer]
+          description: User role
+        tenantId:
+          type: string
+          description: Tenant ID
+        permissions:
+          type: object
+          description: User permissions
+        lastLogin:
+          type: string
+          format: date-time
+          description: Last login timestamp
+        createdAt:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+
+    TenantInfo:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: Tenant ID
+        tenantId:
+          type: string
+          description: Tenant identifier
+        name:
+          type: string
+          description: Tenant name
+        displayName:
+          type: string
+          description: Display name
+        description:
+          type: string
+          description: Tenant description
+        subscriptionPlan:
+          type: string
+          enum: [trial, basic, professional, enterprise]
+          description: Subscription plan
+        subscriptionStatus:
+          type: string
+          description: Current subscription status
+        settings:
+          type: object
+          description: Tenant settings
+        usage:
+          type: object
+          description: Usage statistics
+
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/UserProfile'
+            token:
+              type: string
+              description: JWT authentication token
+        message:
+          type: string
+          description: Response message
+
+    # Schema Schemas
     SchemaDefinition:
       type: object
       properties:
