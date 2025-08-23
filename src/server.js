@@ -1,13 +1,4 @@
 require('dotenv').config();
-
-// Load local config as fallback for development
-const localConfig = require('../config.local');
-Object.keys(localConfig).forEach(key => {
-  if (!process.env[key]) {
-    process.env[key] = localConfig[key];
-  }
-});
-
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
