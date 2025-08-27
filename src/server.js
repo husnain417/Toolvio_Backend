@@ -10,6 +10,7 @@ const dynamicRoutes = require('./routes/dynamicRoutes');
 const auditRoutes = require('./routes/auditRoutes'); // Add audit routes
 const systemRoutes = require('./routes/systemRoutes');
 const authRoutes = require('./routes/authRoutes'); // Add authentication routes
+const tenantRoutes = require('./routes/tenantRoutes'); // Add tenant management routes
 const SchemaService = require('./services/SchemaService');
 const ChangeStreamService = require('./services/ChangeStreamService'); // Add change stream service
 const swaggerUi = require('swagger-ui-express');
@@ -116,6 +117,7 @@ app.use((req, res, next) => {
 
 // Routes
 app.use('/api/auth', authRoutes); // Authentication routes
+app.use('/api/tenants', tenantRoutes); // Tenant management routes
 app.use('/api/schemas', schemaRoutes);
 app.use('/api/data', dynamicRoutes);
 app.use('/api/audit', auditRoutes); // Add audit routes
@@ -176,6 +178,8 @@ app.get('/', (req, res) => {
       'Versioned Record Snapshots'
     ],
     endpoints: {
+      auth: '/api/auth',
+      tenants: '/api/tenants',
       schemas: '/api/schemas',
       data: '/api/data',
       audit: '/api/audit',
