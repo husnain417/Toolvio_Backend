@@ -1,3 +1,15 @@
+// Load local configuration first
+try {
+  const localConfig = require('../config.local.js');
+  Object.keys(localConfig).forEach(key => {
+    if (!process.env[key]) {
+      process.env[key] = localConfig[key];
+    }
+  });
+} catch (error) {
+  console.log('⚠️  No local config found, using environment variables');
+}
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -11,6 +23,7 @@ const auditRoutes = require('./routes/auditRoutes'); // Add audit routes
 const systemRoutes = require('./routes/systemRoutes');
 const authRoutes = require('./routes/authRoutes'); // Add authentication routes
 const tenantRoutes = require('./routes/tenantRoutes'); // Add tenant management routes
+const syncRoutes = require('./routes/syncRoutes'); // Add offline sync routes
 const SchemaService = require('./services/SchemaService');
 const ChangeStreamService = require('./services/ChangeStreamService'); // Add change stream service
 const swaggerUi = require('swagger-ui-express');
@@ -90,7 +103,7 @@ app.use(helmet());
 
 // Enhanced CORS configuration for Swagger UI
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5000', 'http://127.0.0.1:3000', 'http://127.0.0.1:5000'],
+  origin: true, // Allow all origins in development
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -99,6 +112,14 @@ app.use(cors({
 
 // Handle preflight requests
 app.options('*', cors());
+
+// Additional CORS headers for Swagger UI
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  next();
+});
 
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
@@ -122,6 +143,7 @@ app.use('/api/schemas', schemaRoutes);
 app.use('/api/data', dynamicRoutes);
 app.use('/api/audit', auditRoutes); // Add audit routes
 app.use('/api/system', systemRoutes);
+app.use('/api/sync', syncRoutes); // Add offline sync routes
 
 // Swagger UI docs
 try {
@@ -175,7 +197,8 @@ app.get('/', (req, res) => {
       'Auto-generated CRUD APIs',
       'Complete Audit Trail & Rollback',
       'Real-time Change Streams',
-      'Versioned Record Snapshots'
+      'Versioned Record Snapshots',
+      'Offline Sync & Conflict Resolution'
     ],
     endpoints: {
       auth: '/api/auth',
@@ -184,6 +207,7 @@ app.get('/', (req, res) => {
       data: '/api/data',
       audit: '/api/audit',
       system: '/api/system',
+      sync: '/api/sync',
       health: '/api/system/health'
     },
     auditFeatures: {

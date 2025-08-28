@@ -1,6 +1,7 @@
 const AuditLog = require('../models/AuditLog');
 const CollectionGenerator = require('./CollectionGenerator');
 const SchemaService = require('./SchemaService');
+const SyncVersion = require('../models/SyncVersion');
 
 class AuditService {
   /**
@@ -35,7 +36,14 @@ class AuditService {
         changedFields = this.calculateChangedFields(previousState, currentState);
       }
 
-      // Create audit log entry
+      // Get sync versions for this change
+      const [globalVersion, tenantVersion, schemaVersion] = await Promise.all([
+        SyncVersion.getNextVersion('global', 'global'),
+        SyncVersion.getNextVersion('tenant', metadata.tenantId || 'default'),
+        SyncVersion.getNextVersion('schema', `${metadata.tenantId || 'default'}:${schemaName}`)
+      ]);
+
+      // Create audit log entry with sync versions
       const auditLog = new AuditLog({
         documentId,
         schemaName,
@@ -49,7 +57,13 @@ class AuditService {
         ipAddress,
         version,
         metadata,
-        timestamp: new Date()
+        timestamp: new Date(),
+        // Sync-specific fields
+        globalSyncVersion: globalVersion,
+        tenantSyncVersion: tenantVersion,
+        schemaSyncVersion: schemaVersion,
+        tenantId: metadata.tenantId || 'default',
+        syncStatus: 'pending'
       });
 
       const savedAuditLog = await auditLog.save();
