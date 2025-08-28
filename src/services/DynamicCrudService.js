@@ -1,6 +1,7 @@
 const CollectionGenerator = require('./CollectionGenerator');
 const SchemaService = require('./SchemaService');
 const AuditService = require('./AuditService');
+const QueueService = require('./QueueService');
 const schemaValidator = require('../utils/schemaValidator');
 const ReferenceResolver = require('./ReferenceResolver');
 const ChangePropagation = require('./ChangePropagation');
@@ -26,7 +27,7 @@ class DynamicCrudService {
       if (!schema) {
         throw new Error(`Schema '${schemaName}' not found`);
       }
-  
+
       console.log('Step 2: Validating data...');
       const validation = schemaValidator.validateData(schema.jsonSchema, data);
       console.log('Validation result:', validation);
@@ -42,7 +43,7 @@ class DynamicCrudService {
         const errors = referenceValidation.errors.map(e => `${e.field}: ${e.message}`);
         throw new Error(`Reference validation failed: ${errors.join(', ')}`);
       }
-  
+
       console.log('Step 3: Getting dynamic model...');
       const Model = CollectionGenerator.getDynamicModel(schemaName);
       console.log('Model found:', !!Model);
@@ -51,22 +52,23 @@ class DynamicCrudService {
       if (!Model) {
         throw new Error(`Dynamic model for schema '${schemaName}' not found`);
       }
-  
+
       console.log('Step 4: Adding schema name to data...');
       data._schemaName = schemaName;
       console.log('Data with schema name:', JSON.stringify(data, null, 2));
-  
+
       console.log('Step 5: Creating record instance...');
       const record = new Model(data);
       console.log('Record instance created');
-  
+
       console.log('Step 6: Saving record...');
       const savedRecord = await record.save();
       console.log('Record saved successfully');
-  
+
       console.log('Step 7: Logging audit trail...');
       try {
-        await AuditService.logChange({
+        // Queue audit operation instead of direct processing
+        const auditJob = await QueueService.addAuditJob({
           documentId: savedRecord._id,
           schemaName,
           collectionName: Model.collection.name,
@@ -80,13 +82,17 @@ class DynamicCrudService {
             source: 'api',
             ...auditContext.metadata
           }
+        }, {
+          priority: 1,
+          delay: 0
         });
-        console.log('Audit trail logged successfully');
+        
+        console.log(`✅ Audit operation queued: ${auditJob.id}`);
       } catch (auditError) {
-        console.warn('Failed to log audit trail:', auditError.message);
-        // Don't fail the operation if audit logging fails
+        console.warn('Failed to queue audit operation:', auditError.message);
+        // Don't fail the operation if audit queuing fails
       }
-  
+
       console.log('Step 8: Converting to object...');
       const result = savedRecord.toObject();
       console.log('Final result:', JSON.stringify(result, null, 2));
@@ -99,7 +105,7 @@ class DynamicCrudService {
         console.warn('Failed to track dependencies:', dependencyError.message);
         // Don't fail the operation if dependency tracking fails
       }
-  
+
       return result;
     } catch (error) {
       console.error('DynamicCrudService.createRecord ERROR:', error);
@@ -164,9 +170,9 @@ class DynamicCrudService {
 
       const currentState = updatedRecord.toObject();
 
-      // Log audit trail
+      // Log audit trail via queue
       try {
-        await AuditService.logChange({
+        const auditJob = await QueueService.addAuditJob({
           documentId: recordId,
           schemaName,
           collectionName: Model.collection.name,
@@ -180,10 +186,14 @@ class DynamicCrudService {
             source: 'api',
             ...auditContext.metadata
           }
+        }, {
+          priority: 1,
+          delay: 0
         });
-        console.log('Update audit trail logged successfully');
+        
+        console.log(`✅ Update audit operation queued: ${auditJob.id}`);
       } catch (auditError) {
-        console.warn('Failed to log update audit trail:', auditError.message);
+        console.warn('Failed to queue update audit operation:', auditError.message);
       }
 
       // Propagate changes to dependent records
@@ -239,9 +249,9 @@ class DynamicCrudService {
         throw new Error(`Record with ID '${recordId}' not found`);
       }
 
-      // Log audit trail
+      // Log audit trail via queue
       try {
-        await AuditService.logChange({
+        const auditJob = await QueueService.addAuditJob({
           documentId: recordId,
           schemaName,
           collectionName: Model.collection.name,
@@ -255,10 +265,14 @@ class DynamicCrudService {
             source: 'api',
             ...auditContext.metadata
           }
+        }, {
+          priority: 1,
+          delay: 0
         });
-        console.log('Delete audit trail logged successfully');
+        
+        console.log(`✅ Delete audit operation queued: ${auditJob.id}`);
       } catch (auditError) {
-        console.warn('Failed to log delete audit trail:', auditError.message);
+        console.warn('Failed to queue delete audit operation:', auditError.message);
       }
 
       return true;
@@ -409,31 +423,33 @@ class DynamicCrudService {
       const createdRecords = await Model.insertMany(recordsWithSchema);
       const recordObjects = createdRecords.map(record => record.toObject());
 
-      // Log audit trail for each created record
+      // Queue bulk audit operations
       try {
-        const auditPromises = recordObjects.map(record => 
-          AuditService.logChange({
-            documentId: record._id,
-            schemaName,
-            collectionName: Model.collection.name,
-            operation: 'create',
-            previousState: null,
-            currentState: record,
-            userId: auditContext.userId,
-            userAgent: auditContext.userAgent,
-            ipAddress: auditContext.ipAddress,
-            metadata: {
-              source: 'api',
-              bulkOperation: true,
-              ...auditContext.metadata
-            }
-          })
-        );
+        const auditDataArray = recordObjects.map(record => ({
+          documentId: record._id,
+          schemaName,
+          collectionName: Model.collection.name,
+          operation: 'create',
+          previousState: null,
+          currentState: record,
+          userId: auditContext.userId,
+          userAgent: auditContext.userAgent,
+          ipAddress: auditContext.ipAddress,
+          metadata: {
+            source: 'api',
+            bulkOperation: true,
+            ...auditContext.metadata
+          }
+        }));
 
-        await Promise.allSettled(auditPromises);
-        console.log('Bulk create audit trails logged');
+        const auditJob = await QueueService.addBulkAuditJob(auditDataArray, {
+          priority: 2,
+          delay: 0
+        });
+        
+        console.log(`✅ Bulk audit operations queued: ${auditJob.id}`);
       } catch (auditError) {
-        console.warn('Failed to log bulk create audit trails:', auditError.message);
+        console.warn('Failed to queue bulk audit operations:', auditError.message);
       }
 
       return recordObjects;

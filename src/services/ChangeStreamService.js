@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const AuditService = require('./AuditService');
 const SchemaService = require('./SchemaService');
+const QueueService = require('./QueueService');
 
 class ChangeStreamService {
   constructor() {
@@ -185,9 +186,22 @@ class ChangeStreamService {
           return;
       }
 
-      // Log the audit trail
-      await AuditService.logChange(auditData);
-      console.log(`✅ Audit logged for ${operationType} on document ${documentId}`);
+      // Dispatch to queue instead of direct processing
+      try {
+        const result = await QueueService.processChangeStreamEvent(change, schema);
+        console.log(`✅ Change stream event queued: ${result.jobId}`);
+      } catch (queueError) {
+        console.error('❌ Failed to queue change stream event:', queueError);
+        
+        // Fallback to direct processing if queue is unavailable
+        console.log('🔄 Falling back to direct audit processing...');
+        try {
+          await AuditService.logChange(auditData);
+          console.log(`✅ Fallback audit logged for ${operationType} on document ${documentId}`);
+        } catch (fallbackError) {
+          console.error('❌ Fallback audit logging also failed:', fallbackError);
+        }
+      }
       
     } catch (error) {
       console.error('❌ Error handling change event:', error);

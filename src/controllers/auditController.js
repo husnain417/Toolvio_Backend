@@ -1,9 +1,10 @@
 const AuditService = require('../services/AuditService');
+const QueueService = require('../services/QueueService');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
 
 /**
  * Audit Controller
- * Handles all audit trail and rollback operations
+ * Handles audit trail operations and rollback functionality
  */
 class AuditController {
   constructor() {
@@ -18,6 +19,8 @@ class AuditController {
     this.bulkRevertDocuments = this.bulkRevertDocuments.bind(this);
     this.cleanupAuditLogs = this.cleanupAuditLogs.bind(this);
     this.getAuditSummary = this.getAuditSummary.bind(this);
+    this.getAuditJobStatus = this.getAuditJobStatus.bind(this);
+    this.getAuditQueueStatus = this.getAuditQueueStatus.bind(this);
   }
 
   /**
@@ -27,119 +30,96 @@ class AuditController {
    */
   async getDocumentAuditHistory(req, res) {
     try {
-      const { schemaName, recordId } = req.params;
-      const { page, limit, operation, startDate, endDate } = req.query;
+      const { documentId, schemaName } = req.params;
+      const { page = 1, limit = 50, operation, startDate, endDate } = req.query;
 
       const options = {
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20,
+        page: parseInt(page),
+        limit: parseInt(limit),
         operation,
-        startDate,
-        endDate
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined
       };
 
-      const result = await AuditService.getAuditHistory(recordId, schemaName, options);
-      
-      successResponse(res, result, 'Document audit history retrieved successfully');
+      const auditHistory = await AuditService.getAuditHistory(documentId, schemaName, options);
+      successResponse(res, auditHistory, 'Audit history retrieved successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
     }
   }
 
   /**
-   * Get audit history for all documents of a schema
+   * Get audit history for all documents in a schema
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
   async getSchemaAuditHistory(req, res) {
     try {
       const { schemaName } = req.params;
-      const { page, limit, operation, userId, startDate, endDate } = req.query;
+      const { page = 1, limit = 50, operation, startDate, endDate, documentId } = req.query;
 
       const options = {
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 50,
+        page: parseInt(page),
+        limit: parseInt(limit),
         operation,
-        userId,
-        startDate,
-        endDate
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+        documentId
       };
 
-      const result = await AuditService.getSchemaAuditHistory(schemaName, options);
-      
-      successResponse(res, result, 'Schema audit history retrieved successfully');
+      const auditHistory = await AuditService.getSchemaAuditHistory(schemaName, options);
+      successResponse(res, auditHistory, 'Schema audit history retrieved successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
     }
   }
 
   /**
-   * Get document state at a specific version
+   * Get a document at a specific version
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
   async getDocumentAtVersion(req, res) {
     try {
-      const { schemaName, recordId } = req.params;
-      const { version } = req.params;
+      const { documentId, schemaName, version } = req.params;
 
-      const versionNum = parseInt(version);
-      if (isNaN(versionNum) || versionNum < 1) {
-        return errorResponse(res, 'Invalid version number', 400);
+      const document = await AuditService.getDocumentAtVersion(documentId, schemaName, parseInt(version));
+      if (!document) {
+        return errorResponse(res, 'Document version not found', 404);
       }
 
-      const documentAtVersion = await AuditService.getDocumentAtVersion(
-        recordId, 
-        schemaName, 
-        versionNum
-      );
-
-      if (!documentAtVersion) {
-        return errorResponse(res, `Version ${versionNum} not found for document`, 404);
-      }
-
-      successResponse(res, documentAtVersion, 'Document version retrieved successfully');
+      successResponse(res, document, 'Document version retrieved successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
     }
   }
 
   /**
-   * Revert document to a specific version
+   * Revert a document to a specific version
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
   async revertDocumentToVersion(req, res) {
     try {
-      const { schemaName, recordId } = req.params;
-      const { version } = req.params;
+      const { documentId, schemaName, version } = req.params;
       const { reason } = req.body;
-
-      const versionNum = parseInt(version);
-      if (isNaN(versionNum) || versionNum < 1) {
-        return errorResponse(res, 'Invalid version number', 400);
-      }
-
-      // Get audit context from middleware
-      const auditContext = req.auditContext || {};
-
-      const revertOptions = {
-        userId: auditContext.userId,
-        userAgent: auditContext.userAgent,
-        ipAddress: auditContext.ipAddress,
-        reason: reason || `Reverted to version ${versionNum}`
+      const auditContext = {
+        userId: req.user?.id,
+        userAgent: req.get('User-Agent'),
+        ipAddress: req.ip,
+        metadata: { reason }
       };
 
       const result = await AuditService.revertToVersion(
-        recordId,
+        documentId,
         schemaName,
-        versionNum,
-        revertOptions
+        parseInt(version),
+        auditContext
       );
 
-      successResponse(res, result, `Document reverted to version ${versionNum} successfully`);
+      successResponse(res, result, 'Document reverted successfully');
     } catch (error) {
-      errorResponse(res, error.message, 400);
+      errorResponse(res, error.message, 500);
     }
   }
 
@@ -151,11 +131,9 @@ class AuditController {
   async getAuditStats(req, res) {
     try {
       const { schemaName } = req.params;
-      const { timeframe } = req.query;
+      const { timeframe = '30d', operation } = req.query;
 
-      const options = { timeframe: timeframe || '30d' };
-      const stats = await AuditService.getAuditStats(schemaName, options);
-      
+      const stats = await AuditService.getAuditStats(schemaName, { timeframe, operation });
       successResponse(res, stats, 'Audit statistics retrieved successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
@@ -163,39 +141,21 @@ class AuditController {
   }
 
   /**
-   * Get all versions for a specific document
+   * Get all versions of a document
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
   async getDocumentVersions(req, res) {
     try {
-      const { schemaName, recordId } = req.params;
-      const { page, limit } = req.query;
+      const { documentId, schemaName } = req.params;
+      const { page = 1, limit = 50 } = req.query;
 
-      const options = {
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20
-      };
+      const versions = await AuditService.getDocumentVersions(documentId, schemaName, {
+        page: parseInt(page),
+        limit: parseInt(limit)
+      });
 
-      const result = await AuditService.getAuditHistory(recordId, schemaName, options);
-      
-      // Transform audit logs to version format
-      const versions = result.auditLogs.map(log => ({
-        version: log.version,
-        operation: log.operation,
-        timestamp: log.timestamp,
-        userId: log.userId,
-        changedFields: log.changedFields,
-        canRevert: log.canRevert,
-        metadata: log.metadata
-      }));
-
-      const response = {
-        versions,
-        pagination: result.pagination
-      };
-
-      successResponse(res, response, 'Document versions retrieved successfully');
+      successResponse(res, versions, 'Document versions retrieved successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
     }
@@ -208,182 +168,86 @@ class AuditController {
    */
   async compareDocumentVersions(req, res) {
     try {
-      const { schemaName, recordId } = req.params;
-      const { fromVersion, toVersion } = req.query;
+      const { documentId, schemaName } = req.params;
+      const { version1, version2 } = req.query;
 
-      if (!fromVersion || !toVersion) {
-        return errorResponse(res, 'Both fromVersion and toVersion are required', 400);
+      if (!version1 || !version2) {
+        return errorResponse(res, 'Both version1 and version2 are required', 400);
       }
 
-      const fromVersionNum = parseInt(fromVersion);
-      const toVersionNum = parseInt(toVersion);
+      const comparison = await AuditService.compareDocumentVersions(
+        documentId,
+        schemaName,
+        parseInt(version1),
+        parseInt(version2)
+      );
 
-      if (isNaN(fromVersionNum) || isNaN(toVersionNum)) {
-        return errorResponse(res, 'Version numbers must be integers', 400);
-      }
-
-      // Get both versions
-      const fromDoc = await AuditService.getDocumentAtVersion(recordId, schemaName, fromVersionNum);
-      const toDoc = await AuditService.getDocumentAtVersion(recordId, schemaName, toVersionNum);
-
-      if (!fromDoc) {
-        return errorResponse(res, `Version ${fromVersionNum} not found`, 404);
-      }
-
-      if (!toDoc) {
-        return errorResponse(res, `Version ${toVersionNum} not found`, 404);
-      }
-
-      // Calculate differences
-      const differences = this.calculateVersionDifferences(fromDoc.state, toDoc.state);
-
-      const comparison = {
-        fromVersion: fromVersionNum,
-        toVersion: toVersionNum,
-        fromTimestamp: fromDoc.timestamp,
-        toTimestamp: toDoc.timestamp,
-        differences,
-        totalChanges: differences.length
-      };
-
-      successResponse(res, comparison, 'Version comparison completed successfully');
+      successResponse(res, comparison, 'Document versions compared successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
     }
   }
 
   /**
-   * Bulk revert multiple documents to their previous versions
+   * Bulk revert multiple documents
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
   async bulkRevertDocuments(req, res) {
     try {
-      const { schemaName } = req.params;
-      const { documents, reason } = req.body;
-
-      if (!documents || !Array.isArray(documents) || documents.length === 0) {
-        return errorResponse(res, 'Documents array is required and cannot be empty', 400);
-      }
-
-      const auditContext = req.auditContext || {};
-      const revertOptions = {
-        userId: auditContext.userId,
-        userAgent: auditContext.userAgent,
-        ipAddress: auditContext.ipAddress,
-        reason: reason || 'Bulk revert operation'
+      const { documents } = req.body;
+      const { reason } = req.body;
+      const auditContext = {
+        userId: req.user?.id,
+        userAgent: req.get('User-Agent'),
+        ipAddress: req.ip,
+        metadata: { reason, bulkOperation: true }
       };
 
-      const results = [];
-      const errors = [];
-
-      // Process each document
-      for (const doc of documents) {
-        try {
-          const { recordId, targetVersion } = doc;
-          
-          if (!recordId || !targetVersion) {
-            errors.push({
-              recordId,
-              error: 'recordId and targetVersion are required'
-            });
-            continue;
-          }
-
-          const result = await AuditService.revertToVersion(
-            recordId,
-            schemaName,
-            targetVersion,
-            revertOptions
-          );
-
-          results.push({
-            recordId,
-            targetVersion,
-            success: true,
-            newVersion: result.auditLog.version
-          });
-        } catch (error) {
-          errors.push({
-            recordId: doc.recordId,
-            error: error.message
-          });
-        }
+      if (!Array.isArray(documents) || documents.length === 0) {
+        return errorResponse(res, 'Documents array is required and must not be empty', 400);
       }
 
-      const response = {
-        successful: results,
-        failed: errors,
-        totalProcessed: documents.length,
-        successCount: results.length,
-        errorCount: errors.length
-      };
-
-      successResponse(res, response, 'Bulk revert operation completed');
+      const results = await AuditService.bulkRevertDocuments(documents, auditContext);
+      successResponse(res, results, 'Bulk revert completed successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
     }
   }
 
   /**
-   * Clean up old audit logs
+   * Cleanup old audit logs
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
   async cleanupAuditLogs(req, res) {
     try {
-      const { schemaName } = req.params;
-      const { olderThan, operation, dryRun } = req.query;
+      const { olderThan = 365, schemaName, operation, dryRun = false } = req.body;
 
-      const options = {
+      const result = await AuditService.cleanupOldAuditLogs({
+        olderThan: parseInt(olderThan),
         schemaName,
-        olderThan: parseInt(olderThan) || 365, // days
         operation,
-        dryRun: dryRun === 'true'
-      };
+        dryRun: dryRun === true
+      });
 
-      const result = await AuditService.cleanupOldAuditLogs(options);
-      
-      const message = options.dryRun 
-        ? 'Audit cleanup dry run completed' 
-        : 'Audit logs cleaned up successfully';
-
-      successResponse(res, result, message);
+      successResponse(res, result, 'Audit cleanup completed successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
     }
   }
 
   /**
-   * Get audit summary for dashboard
+   * Get audit summary for a schema
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
   async getAuditSummary(req, res) {
     try {
       const { schemaName } = req.params;
-      const { timeframe } = req.query;
+      const { timeframe = '30d' } = req.query;
 
-      // Get basic stats
-      const stats = await AuditService.getAuditStats(schemaName, { timeframe });
-      
-      // Get recent activity (last 10 changes)
-      const recentActivity = await AuditService.getSchemaAuditHistory(schemaName, {
-        page: 1,
-        limit: 10
-      });
-
-      const summary = {
-        stats,
-        recentActivity: recentActivity.auditLogs,
-        summary: {
-          totalOperations: stats.totalAuditLogs,
-          uniqueDocuments: stats.uniqueDocuments,
-          mostFrequentOperation: this.getMostFrequentOperation(stats.operations),
-          timeframe: timeframe || '30d'
-        }
-      };
-
+      const summary = await AuditService.getAuditSummary(schemaName, { timeframe });
       successResponse(res, summary, 'Audit summary retrieved successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
@@ -391,72 +255,52 @@ class AuditController {
   }
 
   /**
-   * Calculate differences between two document states
-   * @private
-   * @param {Object} fromState - From document state
-   * @param {Object} toState - To document state
-   * @returns {Array} - Array of differences
+   * Get status of a specific audit job
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
    */
-  calculateVersionDifferences(fromState, toState) {
-    const differences = [];
-    const allFields = new Set([
-      ...Object.keys(fromState || {}),
-      ...Object.keys(toState || {})
-    ]);
+  async getAuditJobStatus(req, res) {
+    try {
+      const { jobId } = req.params;
 
-    for (const field of allFields) {
-      // Skip system fields
-      if (['_id', '__v', 'createdAt', 'updatedAt', '_schemaName'].includes(field)) {
-        continue;
+      const job = await QueueService.getJob(jobId, 'audit');
+      if (!job) {
+        return errorResponse(res, 'Audit job not found', 404);
       }
 
-      const fromValue = fromState[field];
-      const toValue = toState[field];
+      const jobStatus = {
+        id: job.id,
+        name: job.name,
+        data: job.data,
+        status: await job.getState(),
+        progress: job.progress,
+        attemptsMade: job.attemptsMade,
+        failedReason: job.failedReason,
+        timestamp: job.timestamp,
+        processedOn: job.processedOn,
+        finishedOn: job.finishedOn,
+        delay: job.delay,
+        priority: job.priority
+      };
 
-      if (JSON.stringify(fromValue) !== JSON.stringify(toValue)) {
-        differences.push({
-          field,
-          fromValue,
-          toValue,
-          changeType: this.getChangeType(fromValue, toValue)
-        });
-      }
+      successResponse(res, jobStatus, 'Audit job status retrieved successfully');
+    } catch (error) {
+      errorResponse(res, error.message, 500);
     }
-
-    return differences;
   }
 
   /**
-   * Determine the type of change between two values
-   * @private
-   * @param {*} fromValue - Original value
-   * @param {*} toValue - New value
-   * @returns {string} - Change type
+   * Get status of the audit queue
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
    */
-  getChangeType(fromValue, toValue) {
-    if (fromValue === undefined && toValue !== undefined) return 'added';
-    if (fromValue !== undefined && toValue === undefined) return 'removed';
-    return 'modified';
-  }
-
-  /**
-   * Get the most frequent operation from stats
-   * @private
-   * @param {Object} operations - Operations object with counts
-   * @returns {string} - Most frequent operation
-   */
-  getMostFrequentOperation(operations) {
-    let maxCount = 0;
-    let mostFrequent = 'none';
-
-    for (const [operation, count] of Object.entries(operations)) {
-      if (count > maxCount) {
-        maxCount = count;
-        mostFrequent = operation;
-      }
+  async getAuditQueueStatus(req, res) {
+    try {
+      const queueStatus = await QueueService.getQueueStatus('audit');
+      successResponse(res, queueStatus, 'Audit queue status retrieved successfully');
+    } catch (error) {
+      errorResponse(res, error.message, 500);
     }
-
-    return mostFrequent;
   }
 }
 

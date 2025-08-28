@@ -1,16 +1,8 @@
 const express = require('express');
 const auditController = require('../controllers/auditController');
-const { 
-  schemaExists, 
-  validateRecordId, 
-  validatePagination 
-} = require('../middleware/validateSchema');
-const { 
-  validateRevertPermissions, 
-  validateVersionNumber,
-  captureAuditContext 
-} = require('../middleware/Audit');
-const { authenticate, authorize, requireTenantAccess } = require('../middleware/auth');
+const { captureAuditContext, validateRevertPermissions, validateVersionNumber } = require('../middleware/Audit');
+const { schemaExists, validateRecordId, validatePagination } = require('../middleware/validateSchema');
+const { authenticate, requireTenantAccess, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -18,81 +10,88 @@ const router = express.Router();
 router.use(captureAuditContext);
 
 // Apply authentication and tenant access to all routes
-router.use(authenticate, requireTenantAccess);
+router.use(authenticate);
+router.use(requireTenantAccess);
 
-// Schema-level audit routes (no record ID required)
+// Apply authorization to all routes
+router.use(authorize('audit', 'read'));
+
+// Get audit history for a specific document
+router.get('/:schemaName/:documentId/history', 
+  schemaExists, 
+  validateRecordId, 
+  validatePagination, 
+  auditController.getDocumentAuditHistory
+);
+
+// Get audit history for all documents in a schema
 router.get('/:schemaName/history', 
-  authorize('audit', 'read'),
-  schemaExists(), 
+  schemaExists, 
   validatePagination, 
   auditController.getSchemaAuditHistory
 );
 
-router.get('/:schemaName/stats', 
-  authorize('audit', 'read'),
-  schemaExists(), 
-  auditController.getAuditStats
-);
-
-router.get('/:schemaName/summary', 
-  authorize('audit', 'read'),
-  schemaExists(), 
-  auditController.getAuditSummary
-);
-
-router.post('/:schemaName/cleanup', 
-  authorize('audit', 'rollback'),
-  schemaExists(), 
-  //validateRevertPermissions,
-  auditController.cleanupAuditLogs
-);
-
-router.post('/:schemaName/bulk-revert', 
-  authorize('audit', 'rollback'),
-  schemaExists(), 
-  validateRevertPermissions,
-  auditController.bulkRevertDocuments
-);
-
-// Document-specific audit routes
-router.get('/:schemaName/:recordId/history', 
-  authorize('audit', 'read'),
-  schemaExists(), 
-  validateRecordId(), 
-  validatePagination,
-  auditController.getDocumentAuditHistory
-);
-
-router.get('/:schemaName/:recordId/versions', 
-  authorize('audit', 'read'),
-  schemaExists(), 
-  validateRecordId(), 
-  validatePagination,
-  auditController.getDocumentVersions
-);
-
-router.get('/:schemaName/:recordId/version/:version', 
-  authorize('audit', 'read'),
-  schemaExists(), 
-  validateRecordId(), 
-  validateVersionNumber,
+// Get document at a specific version
+router.get('/:schemaName/:documentId/versions/:version', 
+  schemaExists, 
+  validateRecordId, 
+  validateVersionNumber, 
   auditController.getDocumentAtVersion
 );
 
-router.get('/:schemaName/:recordId/compare', 
-  authorize('audit', 'read'),
-  schemaExists(), 
-  validateRecordId(),
+// Get all versions of a document
+router.get('/:schemaName/:documentId/versions', 
+  schemaExists, 
+  validateRecordId, 
+  validatePagination, 
+  auditController.getDocumentVersions
+);
+
+// Compare two versions of a document
+router.get('/:schemaName/:documentId/compare', 
+  schemaExists, 
+  validateRecordId, 
   auditController.compareDocumentVersions
 );
 
-router.post('/:schemaName/:recordId/revert/:version', 
-  authorize('audit', 'rollback'),
-  schemaExists(), 
-  validateRecordId(), 
-  validateVersionNumber,
-  //validateRevertPermissions,
+// Get audit statistics for a schema
+router.get('/:schemaName/stats', 
+  schemaExists, 
+  auditController.getAuditStats
+);
+
+// Get audit summary for a schema
+router.get('/:schemaName/summary', 
+  schemaExists, 
+  auditController.getAuditSummary
+);
+
+// Revert document to a specific version (requires write permission)
+router.post('/:schemaName/:documentId/revert/:version', 
+  authorize('audit', 'write'),
+  schemaExists, 
+  validateRecordId, 
+  validateVersionNumber, 
+  validateRevertPermissions, 
   auditController.revertDocumentToVersion
 );
+
+// Bulk revert multiple documents (requires write permission)
+router.post('/:schemaName/bulk-revert', 
+  authorize('audit', 'write'),
+  schemaExists, 
+  auditController.bulkRevertDocuments
+);
+
+// Cleanup old audit logs (requires admin permission)
+router.post('/:schemaName/cleanup', 
+  authorize('audit', 'admin'),
+  schemaExists, 
+  auditController.cleanupAuditLogs
+);
+
+// Job status and queue management routes
+router.get('/jobs/:jobId/status', auditController.getAuditJobStatus);
+router.get('/queue/status', auditController.getAuditQueueStatus);
 
 module.exports = router;

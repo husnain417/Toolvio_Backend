@@ -11,8 +11,10 @@ const auditRoutes = require('./routes/auditRoutes'); // Add audit routes
 const systemRoutes = require('./routes/systemRoutes');
 const authRoutes = require('./routes/authRoutes'); // Add authentication routes
 const tenantRoutes = require('./routes/tenantRoutes'); // Add tenant management routes
+const queueRoutes = require('./routes/queueRoutes'); // Add queue management routes
 const SchemaService = require('./services/SchemaService');
 const ChangeStreamService = require('./services/ChangeStreamService'); // Add change stream service
+const QueueService = require('./services/QueueService'); // Add queue service
 const swaggerUi = require('swagger-ui-express');
 const fs = require('fs');
 const path = require('path');
@@ -36,6 +38,11 @@ const initializeServer = async () => {
     await SchemaService.initializeDynamicModels();
     console.log('✅ Dynamic models initialized');
     
+    // Initialize queue service
+    console.log('📋 Initializing queue service...');
+    await QueueService.initialize();
+    console.log('✅ Queue service initialized');
+    
     // Initialize change streams for audit trail
     console.log('🔍 Initializing change streams for audit trail...');
     await ChangeStreamService.initialize();
@@ -57,6 +64,11 @@ const gracefulShutdown = async () => {
     console.log('🔍 Shutting down change streams...');
     await ChangeStreamService.shutdown();
     console.log('✅ Change streams shut down');
+    
+    // Shutdown queue service
+    console.log('📋 Shutting down queue service...');
+    await QueueService.shutdown();
+    console.log('✅ Queue service shut down');
     
     // Close database connection
     console.log('📡 Closing database connection...');
@@ -122,6 +134,7 @@ app.use('/api/schemas', schemaRoutes);
 app.use('/api/data', dynamicRoutes);
 app.use('/api/audit', auditRoutes); // Add audit routes
 app.use('/api/system', systemRoutes);
+app.use('/api/admin/queues', queueRoutes); // Add queue management routes
 
 // Swagger UI docs
 try {
@@ -175,7 +188,8 @@ app.get('/', (req, res) => {
       'Auto-generated CRUD APIs',
       'Complete Audit Trail & Rollback',
       'Real-time Change Streams',
-      'Versioned Record Snapshots'
+      'Versioned Record Snapshots',
+      'Background Job Processing with BullMQ'
     ],
     endpoints: {
       auth: '/api/auth',
@@ -184,6 +198,7 @@ app.get('/', (req, res) => {
       data: '/api/data',
       audit: '/api/audit',
       system: '/api/system',
+      queues: '/api/admin/queues',
       health: '/api/system/health'
     },
     auditFeatures: {
@@ -191,7 +206,8 @@ app.get('/', (req, res) => {
       auditHistory: 'Complete audit trail for all document changes',
       rollback: 'Revert documents to any previous version',
       versioning: 'Sequential version numbering for all changes',
-      bulkOperations: 'Bulk revert and audit operations supported'
+      bulkOperations: 'Bulk revert and audit operations supported',
+      backgroundProcessing: 'Asynchronous audit processing with BullMQ queues'
     }
   });
 });
@@ -210,7 +226,8 @@ app.get('/health', (req, res) => {
         status: changeStreamStatus.isInitialized ? 'active' : 'inactive',
         totalStreams: changeStreamStatus.totalStreams,
         streamsDetails: changeStreamStatus.streams
-      }
+      },
+      queues: QueueService.getStatus()
     }
   });
 });
@@ -227,7 +244,8 @@ app.use('*', (req, res) => {
       '/api/schemas',
       '/api/data',
       '/api/audit',
-      '/api/system'
+      '/api/system',
+      '/api/admin/queues'
     ]
   });
 });
@@ -242,11 +260,13 @@ const startServer = async () => {
     console.log(`🗄️ Database: ${process.env.MONGODB_URI ? 'Connected' : 'Not configured'}`);
     console.log(`🔧 Dynamic models: Initialized and ready`);
     console.log(`🔍 Audit trail: Active with change streams`);
+    console.log(`📋 Background queues: Active with BullMQ + Redis`);
     console.log(`📝 API Documentation available at: http://localhost:${PORT}/`);
     console.log('');
     console.log('🎉 Craftsman Dynamic Backend is ready!');
     console.log('✅ Milestone 1: Schema-Driven API - COMPLETE');
     console.log('✅ Milestone 2: Audit Trail & Rollback - COMPLETE');
+    console.log('✅ Background Processing: BullMQ + Redis - COMPLETE');
     console.log('');
   });
   
