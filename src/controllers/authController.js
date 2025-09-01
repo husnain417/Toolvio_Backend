@@ -2,12 +2,334 @@ const AuthService = require('../services/AuthService');
 const User = require('../models/User');
 const Tenant = require('../models/Tenant');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
+const jwt = require('jsonwebtoken'); // Added for registerSuperAdmin
 
 /**
  * Authentication Controller
  * Handles user authentication, registration, and token management
  */
 class AuthController {
+  /**
+   * Register a super admin (production use)
+   * Only works if no super admin exists in the system
+   */
+  async registerSuperAdmin(req, res) {
+    try {
+      // Check if any super admin already exists
+      const existingSuperAdmin = await User.findOne({ 
+        $or: [{ role: 'system_admin' }, { isSystemAdmin: true }] 
+      });
+      
+      if (existingSuperAdmin) {
+        return res.status(400).json({
+          success: false,
+          message: 'Super admin already exists in the system',
+          code: 'SUPER_ADMIN_EXISTS'
+        });
+      }
+
+      const { username, email, password, firstName, lastName } = req.body;
+
+      // Validate required fields
+      if (!username || !email || !password || !firstName || !lastName) {
+        return res.status(400).json({
+          success: false,
+          message: 'All fields are required',
+          code: 'MISSING_FIELDS'
+        });
+      }
+
+      // Check if user already exists
+      const existingUser = await User.findOne({
+        $or: [{ email }, { username }]
+      });
+
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          message: 'User with this email or username already exists',
+          code: 'USER_EXISTS'
+        });
+      }
+
+      // Create super admin user
+      const superAdmin = new User({
+        username,
+        email,
+        password,
+        firstName,
+        lastName,
+        role: 'system_admin',
+        isSystemAdmin: true,
+        isActive: true,
+        permissions: {
+          system: {
+            manageTenants: true,
+            systemMonitoring: true,
+            platformConfig: true
+          },
+          schemas: {
+            create: true,
+            read: true,
+            update: true,
+            delete: true,
+            versioning: true
+          },
+          data: {
+            create: true,
+            read: true,
+            update: true,
+            delete: true,
+            bulk: true
+          },
+          audit: {
+            read: true,
+            export: true,
+            rollback: true
+          },
+          users: {
+            create: true,
+            read: true,
+            update: true,
+            delete: true,
+            roles: true
+          },
+          tenants: {
+            create: true,
+            read: true,
+            update: true,
+            delete: true,
+            manage: true
+          }
+        }
+      });
+
+      await superAdmin.save();
+
+      // Create first default tenant
+      const defaultTenant = new Tenant({
+        tenantId: 'default-platform',
+        name: 'Default Platform Tenant',
+        displayName: 'Default Platform Tenant',
+        domain: 'default-platform',
+        description: 'Default platform tenant for system administration',
+        settings: {
+          timezone: 'UTC',
+          currency: 'USD',
+          businessType: 'platform'
+        },
+        isActive: true
+      });
+
+      await defaultTenant.save();
+
+      // Generate JWT token
+      const token = jwt.sign(
+        { 
+          userId: superAdmin._id, 
+          email: superAdmin.email, 
+          role: superAdmin.role,
+          isSystemAdmin: true
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'Super admin registered successfully',
+        data: {
+          user: {
+            _id: superAdmin._id,
+            username: superAdmin.username,
+            email: superAdmin.email,
+            firstName: superAdmin.firstName,
+            lastName: superAdmin.lastName,
+            role: superAdmin.role,
+            isSystemAdmin: superAdmin.isSystemAdmin
+          },
+          tenant: {
+            _id: defaultTenant._id,
+            name: defaultTenant.name,
+            domain: defaultTenant.domain
+          },
+          token
+        }
+      });
+
+    } catch (error) {
+      console.error('Error registering super admin:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to register super admin',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Bootstrap system (development/testing use)
+   * Can work without master key if no super admin exists
+   */
+  async bootstrap(req, res) {
+    try {
+      const { email, password, firstName, lastName, masterKey } = req.body;
+
+      // Check if any super admin already exists
+      const existingSuperAdmin = await User.findOne({ 
+        $or: [{ role: 'system_admin' }, { isSystemAdmin: true }] 
+      });
+      
+      if (existingSuperAdmin) {
+        return res.status(400).json({
+          success: false,
+          message: 'System already bootstrapped. Super admin exists.',
+          code: 'ALREADY_BOOTSTRAPPED'
+        });
+      }
+
+      // In production, allow bootstrap without master key if no super admin exists
+      const isProduction = process.env.NODE_ENV === 'production';
+      const hasMasterKey = masterKey && masterKey === process.env.SYSTEM_BOOTSTRAP_KEY;
+      
+      if (isProduction && !hasMasterKey) {
+        return res.status(400).json({
+          success: false,
+          message: 'Master key required for production bootstrap',
+          code: 'MASTER_KEY_REQUIRED'
+        });
+      }
+
+      // Validate required fields
+      if (!email || !password || !firstName || !lastName) {
+        return res.status(400).json({
+          success: false,
+          message: 'All fields are required',
+          code: 'MISSING_FIELDS'
+        });
+      }
+
+      // Check if user already exists
+      const existingUser = await User.findOne({ email });
+
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          message: 'User with this email already exists',
+          code: 'USER_EXISTS'
+        });
+      }
+
+      // Create system admin user
+      const systemAdmin = new User({
+        username: email.split('@')[0], // Generate username from email
+        email,
+        password,
+        firstName,
+        lastName,
+        role: 'system_admin',
+        isSystemAdmin: true,
+        isActive: true,
+        permissions: {
+          system: {
+            manageTenants: true,
+            systemMonitoring: true,
+            platformConfig: true
+          },
+          schemas: {
+            create: true,
+            read: true,
+            update: true,
+            delete: true,
+            versioning: true
+          },
+          data: {
+            create: true,
+            read: true,
+            update: true,
+            delete: true,
+            bulk: true
+          },
+          audit: {
+            read: true,
+            export: true,
+            rollback: true
+          },
+          users: {
+            create: true,
+            read: true,
+            update: true,
+            delete: true,
+            roles: true
+          },
+          tenants: {
+            create: true,
+            read: true,
+            update: true,
+            delete: true,
+            manage: true
+          }
+        }
+      });
+
+      await systemAdmin.save();
+
+      // Create first tenant
+      const firstTenant = new Tenant({
+        name: 'First Platform Tenant',
+        domain: 'first-tenant',
+        settings: {
+          timezone: 'UTC',
+          currency: 'USD',
+          businessType: 'platform'
+        },
+        isActive: true
+      });
+
+      await firstTenant.save();
+
+      // Generate JWT token
+      const token = jwt.sign(
+        { 
+          userId: systemAdmin._id, 
+          email: systemAdmin.email, 
+          role: systemAdmin.role,
+          isSystemAdmin: true
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'System bootstrapped successfully',
+        data: {
+          systemAdmin: {
+            _id: systemAdmin._id,
+            email: systemAdmin.email,
+            role: systemAdmin.role,
+            isSystemAdmin: systemAdmin.isSystemAdmin
+          },
+          firstTenant: {
+            _id: firstTenant._id,
+            name: firstTenant.name,
+            domain: firstTenant.domain
+          },
+          token,
+          tenantsCreated: [firstTenant.domain]
+        }
+      });
+
+    } catch (error) {
+      console.error('Error bootstrapping system:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bootstrap system',
+        error: error.message
+      });
+    }
+  }
+
   /**
    * User login
    * @param {Object} req - Express request object
@@ -18,13 +340,78 @@ class AuthController {
       const { identifier, password, tenantId } = req.body;
 
       // Validate required fields
-      if (!identifier || !password || !tenantId) {
-        return errorResponse(res, 'Username/email, password, and tenant ID are required', 400);
+      if (!identifier || !password) {
+        return errorResponse(res, 'Username/email and password are required', 400);
       }
 
-      // Authenticate user
+      // For system admin login, tenantId is not required
+      if (!tenantId) {
+        // Try to find system admin first
+        const systemAdmin = await User.findOne({ 
+          $or: [{ username: identifier }, { email: identifier }],
+          role: 'system_admin'
+        });
+        
+        if (systemAdmin) {
+          const isValidPassword = await systemAdmin.comparePassword(password);
+          if (isValidPassword) {
+            const token = AuthService.generateToken(systemAdmin);
+            const result = {
+              user: {
+                _id: systemAdmin._id,
+                username: systemAdmin.username,
+                email: systemAdmin.email,
+                firstName: systemAdmin.firstName,
+                lastName: systemAdmin.lastName,
+                role: systemAdmin.role,
+                isSystemAdmin: systemAdmin.isSystemAdmin,
+                permissions: systemAdmin.getEffectivePermissions()
+              },
+              token
+            };
+            return successResponse(res, result, 'System admin login successful');
+          }
+        }
+
+        // If not system admin, search for regular user across all tenants
+        const user = await User.findOne({
+          $or: [{ username: identifier }, { email: identifier }],
+          isActive: true,
+          role: { $ne: 'system_admin' }  // Exclude system admin from this search
+        });
+
+        if (!user) {
+          return errorResponse(res, 'Invalid credentials', 401);
+        }
+
+        // Validate password
+        const isValidPassword = await user.comparePassword(password);
+        if (!isValidPassword) {
+          return errorResponse(res, 'Invalid credentials', 401);
+        }
+
+        // Generate token with user's tenant context automatically included
+        const token = AuthService.generateToken(user);
+        const result = {
+          user: {
+            _id: user._id,
+            username: user.username,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            role: user.role,
+            tenantId: user.tenantId,  // Automatically included from user record
+            isSystemAdmin: user.isSystemAdmin,
+            permissions: user.getEffectivePermissions()
+          },
+          token
+        };
+        return successResponse(res, result, 'Login successful');
+      }
+
+      // Legacy support: If tenantId is provided, use the old method
+      // This maintains backward compatibility
       const result = await AuthService.authenticateUser(identifier, password, tenantId);
-      
       successResponse(res, result, 'Login successful');
     } catch (error) {
       errorResponse(res, error.message, 401);
@@ -32,9 +419,7 @@ class AuthController {
   }
 
   /**
-   * User registration
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
+   * User registration - restricted to customer and technician roles only
    */
   async register(req, res) {
     try {
@@ -43,6 +428,12 @@ class AuthController {
       // Validate required fields
       if (!username || !email || !password || !firstName || !lastName || !tenantId) {
         return errorResponse(res, 'All fields are required', 400);
+      }
+
+      // Role validation - restrict self-registration to basic roles only
+      const allowedSelfRegistrationRoles = ['customer', 'technician'];
+      if (!allowedSelfRegistrationRoles.includes(role)) {
+        return errorResponse(res, 'Self-registration limited to customer and technician roles only. Contact your administrator for other roles.', 400);
       }
 
       // Check if tenant exists and is active
@@ -61,6 +452,11 @@ class AuthController {
         return errorResponse(res, 'Username or email already exists in this tenant', 400);
       }
 
+      // Check if tenant can create more users
+      if (!tenant.canCreateUser()) {
+        return errorResponse(res, 'User limit reached for this tenant', 403);
+      }
+
       // Create user
       const userData = {
         username,
@@ -73,6 +469,9 @@ class AuthController {
       };
 
       const user = await AuthService.createUser(userData, tenantId);
+      
+      // Update tenant usage count
+      await tenant.updateUsage({ userCount: tenant.usage.userCount + 1 });
       
       // Generate token for new user
       const token = AuthService.generateToken(user);
@@ -92,6 +491,75 @@ class AuthController {
       };
 
       successResponse(res, result, 'User registered successfully', 201);
+    } catch (error) {
+      errorResponse(res, error.message, 400);
+    }
+  }
+
+  /**
+   * Create office user - admin only endpoint
+   */
+  async createOfficeUser(req, res) {
+    try {
+      const { username, email, password, firstName, lastName } = req.body;
+      const tenantId = req.user.tenantId; // Get tenantId from authenticated admin user
+
+      // Validate required fields
+      if (!username || !email || !password || !firstName || !lastName) {
+        return errorResponse(res, 'All fields are required', 400);
+      }
+
+      // Check if tenant exists and is active
+      const tenant = await Tenant.findOne({ tenantId, isActive: true });
+      if (!tenant) {
+        return errorResponse(res, 'Invalid or inactive tenant', 400);
+      }
+
+      // Check if tenant can create more users
+      if (!tenant.canCreateUser()) {
+        return errorResponse(res, 'User limit reached for this tenant', 403);
+      }
+
+      // Check if username already exists in tenant
+      const existingUser = await User.findOne({ 
+        $or: [{ username }, { email }],
+        tenantId 
+      });
+      
+      if (existingUser) {
+        return errorResponse(res, 'Username or email already exists in this tenant', 400);
+      }
+
+      // Create office user (fixed role)
+      const userData = {
+        username,
+        email,
+        password,
+        firstName,
+        lastName,
+        role: 'office', // Fixed role for admin creation
+        tenantId
+      };
+
+      const user = await AuthService.createUser(userData, tenantId);
+      
+      // Update tenant usage count
+      await tenant.updateUsage({ userCount: tenant.usage.userCount + 1 });
+      
+      const result = {
+        user: {
+          _id: user._id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          tenantId: user.tenantId,
+          permissions: user.getEffectivePermissions()
+        }
+      };
+
+      successResponse(res, result, 'Office user created successfully', 201);
     } catch (error) {
       errorResponse(res, error.message, 400);
     }

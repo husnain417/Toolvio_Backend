@@ -109,7 +109,42 @@ class QueueService {
         };
       }
 
-      return await auditQueue.addAuditJob(auditData, options);
+      // Use the initialized queue from queueManager
+      const auditQueueInstance = queueManager.getQueue('audit');
+      if (!auditQueueInstance) {
+        throw new Error('Audit queue not initialized');
+      }
+
+      console.log('🔍 Adding audit job to queue:', {
+        queueInstance: !!auditQueueInstance,
+        auditData: {
+          documentId: auditData.documentId,
+          schemaName: auditData.schemaName,
+          operation: auditData.operation
+        }
+      });
+
+      // Use the BullMQ Queue object directly
+      console.log('🔍 About to add job to BullMQ queue:', {
+        queueType: typeof auditQueueInstance,
+        hasAddMethod: typeof auditQueueInstance.add === 'function',
+        queueName: auditQueueInstance.name
+      });
+      
+      // FIX: Use BullMQ's native .add() method with correct job name
+      const result = await auditQueueInstance.add('process-audit', auditData, {
+        priority: options.priority || 1,
+        delay: options.delay || 0,
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000
+        },
+        ...options
+      });
+      
+      console.log('✅ Audit job added to Redis queue:', result.id);
+      return result;
     } catch (error) {
       console.error('❌ Failed to add audit job:', error);
       throw error;
@@ -609,6 +644,7 @@ class QueueService {
         schemaName: schema.name,
         collectionName: schema.collectionName,
         operation: this.mapOperationType(operationType),
+        tenantId: schema.tenantId, // CRITICAL: Pass tenantId from schema
         currentState: fullDocument,
         previousState: fullDocumentBeforeChange,
         metadata: {

@@ -376,6 +376,29 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SchemaUpdateInput'
+            examples:
+              dummyUpdate:
+                summary: Update display and JSON Schema with a valid dummy schema
+                value:
+                  displayName: Test Offline Sync
+                  description: Dummy schema update for testing
+                  jsonSchema:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: Item name
+                      price:
+                        type: number
+                        minimum: 0
+                        description: Item price
+                      description:
+                        type: string
+                        description: Optional description
+                    required:
+                      - name
+                      - price
+                    additionalProperties: false
       responses:
         '200': 
           description: Updated schema
@@ -595,7 +618,7 @@ paths:
     put:
       tags: [Dynamic]
       summary: Update record by ID
-      description: Update a record (requires data write permission)
+      description: Update a record (requires data write permission). The request body shape follows the target schema. Additional properties are allowed depending on the schema definition.
       security:
         - BearerAuth: []
       parameters:
@@ -608,6 +631,19 @@ paths:
             schema:
               type: object
               additionalProperties: true
+            examples:
+              validMinimal:
+                summary: Minimal valid update that satisfies required fields
+                value:
+                  name: "Updated Item"
+                  price: 199.99
+              withOptionalAndExtra:
+                summary: Update including optional and additional properties
+                value:
+                  name: "Updated Item Pro"
+                  price: 249.99
+                  description: "Now with more features"
+                  color: "red"  # example of an additional property if your schema allows it
       responses:
         '200': 
           description: Record updated
@@ -807,6 +843,179 @@ paths:
       responses:
         '200':
           description: Recent logs
+
+  # Offline Sync Routes
+  /api/sync/changes:
+    get:
+      tags: [Sync]
+      summary: Get changes since last sync
+      description: Retrieve incremental changes since a specific sync version
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: since
+          required: true
+          schema:
+            type: number
+          description: Last known global sync version
+        - in: query
+          name: deviceId
+          required: true
+          schema:
+            type: string
+          description: Unique device identifier
+        - in: query
+          name: schemas
+          schema:
+            type: string
+          description: Specific schemas to sync (comma-separated)
+        - in: query
+          name: limit
+          schema:
+            type: number
+            default: 1000
+          description: Maximum number of changes to return
+        - in: query
+          name: includeDeleted
+          schema:
+            type: boolean
+            default: true
+          description: Include tombstone records
+      responses:
+        '200':
+          description: Changes retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  changes:
+                    type: array
+                    items:
+                      type: object
+                  schemaVersions:
+                    type: object
+                  currentGlobalVersion:
+                    type: number
+                  currentTenantVersion:
+                    type: number
+                  syncMetadata:
+                    type: object
+        '400':
+          description: Invalid request parameters
+        '401':
+          description: Unauthorized
+
+  /api/sync/batch:
+    post:
+      tags: [Sync]
+      summary: Process batch of client changes
+      description: Process multiple client changes in a single request
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchSyncRequest'
+      responses:
+        '200':
+          description: Changes processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  processedChanges:
+                    type: number
+                  syncDuration:
+                    type: number
+        '400':
+          description: Invalid request body
+        '401':
+          description: Unauthorized
+
+  /api/sync/state:
+    get:
+      tags: [Sync]
+      summary: Get client sync state
+      description: Retrieve current sync state for a device
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: deviceId
+          required: true
+          schema:
+            type: string
+          description: Unique device identifier
+      responses:
+        '200':
+          description: Sync state retrieved successfully
+        '400':
+          description: Missing deviceId parameter
+        '401':
+          description: Unauthorized
+        '404':
+          description: Sync state not found
+
+    post:
+      tags: [Sync]
+      summary: Create or update client sync state
+      description: Initialize or update client sync state with preferences
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientSyncState'
+      responses:
+        '200':
+          description: Sync state created/updated successfully
+        '400':
+          description: Invalid request body
+        '401':
+          description: Unauthorized
+
+  /api/sync/conflicts:
+    get:
+      tags: [Sync]
+      summary: Get conflicted changes
+      description: Retrieve all conflicted changes for manual resolution
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: schemas
+          schema:
+            type: string
+          description: Specific schemas to check for conflicts (comma-separated)
+      responses:
+        '200':
+          description: Conflicted changes retrieved successfully
+        '401':
+          description: Unauthorized
+
+  /api/sync/health:
+    get:
+      tags: [Sync]
+      summary: Get sync system health
+      description: Retrieve overall sync system health and statistics
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Sync health information retrieved successfully
+        '401':
+          description: Unauthorized
 
   # Tenant Management Routes
   /api/tenants:
@@ -1157,6 +1366,8 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+
+
       description: JWT token from /api/auth/login endpoint
 
   parameters:
@@ -1361,6 +1572,148 @@ components:
         usage:
           type: object
           description: Usage statistics
+
+    # Sync-related schemas
+    SyncRequest:
+      type: object
+      required:
+        - deviceId
+        - since
+      properties:
+        deviceId:
+          type: string
+          description: Unique device identifier
+          example: "iphone_12_pro_max_12345"
+        since:
+          type: number
+          description: Last known global sync version
+          example: 1000
+        schemas:
+          type: array
+          items:
+            type: string
+          description: Optional specific schemas to sync
+          example: ["products", "orders"]
+        limit:
+          type: number
+          description: Maximum number of changes to return
+          example: 1000
+        includeDeleted:
+          type: boolean
+          description: Include tombstone records
+          default: true
+
+    ClientChange:
+      type: object
+      required:
+        - operation
+        - schema
+        - data
+        - clientTimestamp
+      properties:
+        operation:
+          type: string
+          enum: [create, update, delete]
+          description: Type of operation
+        schema:
+          type: string
+          description: Schema name
+          example: "products"
+        recordId:
+          type: string
+          description: Record ID (required for update/delete)
+          example: "507f1f77bcf86cd799439011"
+        data:
+          type: object
+          description: Record data
+        clientTimestamp:
+          type: string
+          format: date-time
+          description: When client made the change
+        clientVersion:
+          type: string
+          description: Client app version
+          example: "1.2.3"
+
+    BatchSyncRequest:
+      type: object
+      required:
+        - deviceId
+        - clientSyncVersion
+        - changes
+      properties:
+        deviceId:
+          type: string
+          description: Unique device identifier
+        clientSyncVersion:
+          type: number
+          description: Client's current sync version
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientChange'
+        conflictResolution:
+          type: object
+          properties:
+            strategy:
+              type: string
+              enum: [server_wins, client_wins, manual, smart_merge]
+              default: smart_merge
+            manualResolutions:
+              type: array
+              items:
+                type: object
+                properties:
+                  changeId:
+                    type: string
+                  resolution:
+                    type: object
+
+    ClientSyncState:
+      type: object
+      required:
+        - deviceId
+        - appVersion
+        - platform
+      properties:
+        deviceId:
+          type: string
+          description: Unique device identifier
+        appVersion:
+          type: string
+          description: Client app version
+        platform:
+          type: string
+          enum: [ios, android, web, desktop]
+          description: Client platform
+        syncIntervalMinutes:
+          type: number
+          description: Sync interval in minutes
+          default: 15
+        connectionType:
+          type: string
+          enum: [wifi, cellular, ethernet, unknown]
+          description: Network connection type
+        networkQuality:
+          type: string
+          enum: [excellent, good, fair, poor]
+          description: Network quality assessment
+        preferences:
+          type: object
+          properties:
+            autoSync:
+              type: boolean
+              default: true
+            syncOnWifiOnly:
+              type: boolean
+              default: false
+            maxBatchSize:
+              type: number
+              default: 1000
+            conflictResolution:
+              type: string
+              enum: [server_wins, client_wins, manual, smart_merge]
+              default: smart_merge
 
     AuthResponse:
       type: object

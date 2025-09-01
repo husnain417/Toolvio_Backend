@@ -22,7 +22,7 @@ class ChangeStreamService {
       console.log('📡 Initializing change streams...');
       
       // Get all active schemas
-      const schemas = await SchemaService.getAllSchemas({ active: true });
+      const schemas = await SchemaService.getAllSchemasSystemWide({ active: true });
       
       // Initialize change stream for each schema
       for (const schema of schemas) {
@@ -148,15 +148,23 @@ class ChangeStreamService {
       
       console.log(`📝 Change detected: ${operationType} in ${schema.name}`);
       
+      // CRITICAL: Get fresh schema from database to ensure we have the latest tenantId
+      const freshSchema = await SchemaService.getSchemaByNameSystemWide(schema.name);
+      if (!freshSchema) {
+        console.error(`❌ Schema not found: ${schema.name}`);
+        return;
+      }
+      
       // Extract document information
       const documentId = documentKey._id;
       
       // Prepare audit data based on operation type
       let auditData = {
         documentId,
-        schemaName: schema.name,
-        collectionName: schema.collectionName,
+        schemaName: freshSchema.name,
+        collectionName: freshSchema.collectionName,
         operation: this.mapOperationType(operationType),
+        tenantId: freshSchema.tenantId, // CRITICAL: Get tenantId from fresh schema
         metadata: {
           source: 'changeStream',
           operationType,
@@ -188,7 +196,7 @@ class ChangeStreamService {
 
       // Dispatch to queue instead of direct processing
       try {
-        const result = await QueueService.processChangeStreamEvent(change, schema);
+        const result = await QueueService.processChangeStreamEvent(change, freshSchema);
         console.log(`✅ Change stream event queued: ${result.jobId}`);
       } catch (queueError) {
         console.error('❌ Failed to queue change stream event:', queueError);
@@ -226,7 +234,7 @@ class ChangeStreamService {
           console.log(`🔍 New dynamic collection detected: ${collectionName}`);
           
           // Try to get the schema and initialize change stream
-          const schema = await SchemaService.getSchemaByName(schemaName);
+          const schema = await SchemaService.getSchemaByNameSystemWide(schemaName);
           if (schema) {
             await this.initializeSchemaChangeStream(schema);
             console.log(`✅ Auto-initialized change stream for new schema: ${schemaName}`);
@@ -269,7 +277,7 @@ class ChangeStreamService {
         this.changeStreams.delete(schemaName);
         
         // Reinitialize
-        const schema = await SchemaService.getSchemaByName(schemaName);
+        const schema = await SchemaService.getSchemaByNameSystemWide(schemaName);
         if (schema) {
           await this.initializeSchemaChangeStream(schema);
           console.log(`✅ Successfully restarted change stream for ${schemaName}`);

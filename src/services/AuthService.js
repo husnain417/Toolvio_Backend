@@ -15,6 +15,7 @@ class AuthService {
       email: user.email,
       role: user.role,
       tenantId: user.tenantId,
+      isSystemAdmin: user.isSystemAdmin || false,
       permissions: user.getEffectivePermissions()
     };
 

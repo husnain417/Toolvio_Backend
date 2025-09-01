@@ -1,4 +1,4 @@
-const { Queue, Worker, QueueScheduler } = require('bullmq');
+const { Queue, Worker } = require('bullmq');
 const auditProcessor = require('./processors/auditProcessor');
 
 class AuditQueue {
@@ -79,7 +79,7 @@ class AuditQueue {
             maxRetriesPerRequest: null
           },
           concurrency: 1, // Each worker processes one job at a time
-          prefix: 'audit'
+          prefix: 'bull' // FIX: Use same prefix as queue
         });
 
         // Handle worker events
@@ -93,6 +93,11 @@ class AuditQueue {
 
         worker.on('error', (error) => {
           console.error(`❌ Worker ${i + 1} error:`, error);
+        });
+
+        // Add specific job type processing
+        worker.on('active', (job) => {
+          console.log(`🔄 Worker ${i + 1} started processing job ${job.id}: ${job.name}`);
         });
 
         this.workers.push(worker);
@@ -114,16 +119,9 @@ class AuditQueue {
     try {
       console.log('📋 Initializing audit queue scheduler...');
       
-      this.scheduler = new QueueScheduler('audit', {
-        connection: redis
-      });
-
-      this.scheduler.on('error', (error) => {
-        console.error('❌ Audit scheduler error:', error);
-      });
-
-      console.log('✅ Audit scheduler initialized');
-      return this.scheduler;
+      // QueueScheduler temporarily disabled due to BullMQ version compatibility
+      console.log('⚠️  Audit QueueScheduler temporarily disabled');
+      return null;
       
     } catch (error) {
       console.error('❌ Failed to initialize audit scheduler:', error);

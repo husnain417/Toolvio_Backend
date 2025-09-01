@@ -6,6 +6,7 @@ const CollectionGenerator = require('../services/CollectionGenerator');
  * This should be used before any CRUD operations
  */
 const captureAuditContext = (req, res, next) => {
+  console.log('🔍 DEBUG: captureAuditContext START');
   console.log('🔍 Capturing audit context');
   
   // Extract user information from request
@@ -15,15 +16,26 @@ const captureAuditContext = (req, res, next) => {
     userAgent: req.get('User-Agent'),
     ipAddress: req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'],
     timestamp: new Date(),
-    sessionId: req.sessionID || req.headers['x-session-id'] || null
+    sessionId: req.sessionID || req.headers['x-session-id'] || null,
+    tenantId: req.user?.tenantId || req.headers['x-tenant-id'] || null // CRITICAL - ensure this is set
   };
+  
+  // DEBUG: Log the actual values
+  console.log('🔍 AUDIT CONTEXT DEBUG:', {
+    tenantId: req.auditContext.tenantId,
+    userId: req.auditContext.userId,
+    userExists: !!req.user,
+    userTenantId: req.user?.tenantId
+  });
   
   console.log('Audit context captured:', {
     userId: req.auditContext.userId,
     ipAddress: req.auditContext.ipAddress,
-    userAgent: req.auditContext.userAgent?.substring(0, 50) + '...'
+    userAgent: req.auditContext.userAgent?.substring(0, 50) + '...',
+    tenantId: req.auditContext.tenantId
   });
   
+  console.log('🔍 DEBUG: captureAuditContext - calling next()');
   next();
 };
 
@@ -89,6 +101,7 @@ async function logOperationAudit(req, operation, responseData) {
       userId: auditContext.userId,
       userAgent: auditContext.userAgent,
       ipAddress: auditContext.ipAddress,
+      tenantId: auditContext.tenantId, // CRITICAL: Pass the actual tenantId from JWT
       metadata: {
         requestMethod: req.method,
         requestUrl: req.originalUrl,

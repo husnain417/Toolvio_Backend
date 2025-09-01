@@ -14,7 +14,7 @@ async function processJob(job) {
   
   try {
     switch (name) {
-      case 'audit:create':
+      case 'process-audit':
         return await processAuditCreate(data);
         
       case 'audit:bulk-create':
@@ -58,6 +58,7 @@ async function processAuditCreate(data) {
     userId,
     userAgent,
     ipAddress,
+    tenantId,
     metadata = {}
   } = data;
 
@@ -77,6 +78,7 @@ async function processAuditCreate(data) {
     userId,
     userAgent,
     ipAddress,
+    tenantId, // CRITICAL: Pass tenantId from job data
     metadata: {
       ...metadata,
       processedBy: 'queue',

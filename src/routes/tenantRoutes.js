@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const tenantController = require('../controllers/tenantController');
-const { authenticate, requireRole } = require('../middleware/auth');
+const { authenticate, requireRole, requireSystemPermission, requireTenantAccess, requireTenantManagement } = require('../middleware/auth');
 
 /**
  * @swagger
@@ -59,7 +59,6 @@ const { authenticate, requireRole } = require('../middleware/auth');
  *           enum: [trial, basic, professional, enterprise]
  *           default: trial
  *           description: Subscription plan
- *           example: "professional"
  *     TenantUpdate:
  *       type: object
  *       properties:
@@ -224,20 +223,80 @@ const { authenticate, requireRole } = require('../middleware/auth');
  * @swagger
  * /api/tenants:
  *   post:
- *     summary: Create a new tenant
- *     description: Create a new tenant with the specified configuration
+ *     summary: Create a new tenant with admin user
+ *     description: Create a new tenant and automatically create an admin user for that tenant
  *     tags: [Tenants]
  *     security:
- *       - BearerAuth: []
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/TenantCreate'
+ *             type: object
+ *             required:
+ *               - username
+ *               - email
+ *               - password
+ *               - firstName
+ *               - lastName
+ *               - tenantInfo
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: Username for the admin user
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: Email for the admin user
+ *               password:
+ *                 type: string
+ *                 description: Password for the admin user
+ *               firstName:
+ *                 type: string
+ *                 description: First name of the admin user
+ *               lastName:
+ *                 type: string
+ *                 description: Last name of the admin user
+ *               role:
+ *                 type: string
+ *                 default: admin
+ *                 description: Role for the user (defaults to admin)
+ *               tenantInfo:
+ *                 type: object
+ *                 required:
+ *                   - name
+ *                   - domain
+ *                 properties:
+ *                   name:
+ *                     type: string
+ *                     description: Display name of the tenant
+ *                   domain:
+ *                     type: string
+ *                     description: Unique domain identifier for the tenant
+ *                   description:
+ *                     type: string
+ *                     description: Tenant description
+ *                   phone:
+ *                     type: string
+ *                     description: Contact phone number
+ *                   timezone:
+ *                     type: string
+ *                     description: Timezone for the tenant
+ *                   currency:
+ *                     type: string
+ *                     description: Default currency for the tenant
+ *                   businessType:
+ *                     type: string
+ *                     description: Type of business
+ *                   subscriptionPlan:
+ *                     type: string
+ *                     enum: [trial, basic, professional, enterprise]
+ *                     default: trial
+ *                     description: Subscription plan
  *     responses:
  *       201:
- *         description: Tenant created successfully
+ *         description: Tenant and admin user created successfully
  *         content:
  *           application/json:
  *             schema:
@@ -245,18 +304,70 @@ const { authenticate, requireRole } = require('../middleware/auth');
  *               properties:
  *                 success:
  *                   type: boolean
- *                 data:
- *                   $ref: '#/components/schemas/TenantResponse'
+ *                   example: true
  *                 message:
  *                   type: string
+ *                   example: Tenant and admin user created successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tenant:
+ *                       type: object
+ *                       properties:
+ *                         _id:
+ *                           type: string
+ *                         tenantId:
+ *                           type: string
+ *                         name:
+ *                           type: string
+ *                         displayName:
+ *                           type: string
+ *                         domain:
+ *                           type: string
+ *                         contactEmail:
+ *                           type: string
+ *                         settings:
+ *                           type: object
+ *                         subscriptionPlan:
+ *                           type: string
+ *                         isActive:
+ *                           type: boolean
+ *                         isTrial:
+ *                           type: boolean
+ *                         trialExpiresAt:
+ *                           type: string
+ *                         createdAt:
+ *                           type: string
+ *                     adminUser:
+ *                       type: object
+ *                       properties:
+ *                         _id:
+ *                           type: string
+ *                         username:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         firstName:
+ *                           type: string
+ *                         lastName:
+ *                           type: string
+ *                         role:
+ *                           type: string
+ *                         tenantId:
+ *                           type: string
+ *                         isActive:
+ *                           type: boolean
+ *                     token:
+ *                       type: string
+ *                       description: JWT token for the new admin user
  *       400:
- *         description: Invalid request data or tenant already exists
+ *         description: Bad request - validation error
  *       401:
- *         description: Authentication required
+ *         description: Unauthorized
  *       403:
- *         description: Insufficient permissions
+ *         description: Forbidden - insufficient permissions
  */
-router.post('/', authenticate, requireRole(['admin']), tenantController.createTenant);
+router.post('/', tenantController.createTenant.bind(tenantController));
 
 /**
  * @swagger
@@ -345,7 +456,7 @@ router.post('/', authenticate, requireRole(['admin']), tenantController.createTe
  *       403:
  *         description: Insufficient permissions
  */
-router.get('/', authenticate, requireRole(['admin']), tenantController.getAllTenants);
+router.get('/', authenticate, requireSystemPermission('manageTenants'), tenantController.getAllTenants.bind(tenantController));
 
 /**
  * @swagger
@@ -421,7 +532,7 @@ router.get('/summary', authenticate, tenantController.getTenantsSummary);
  *       404:
  *         description: Tenant not found
  */
-router.get('/:tenantId', authenticate, requireRole(['admin']), tenantController.getTenantById);
+router.get('/:tenantId', authenticate, requireTenantAccess, tenantController.getTenantById);
 
 /**
  * @swagger
@@ -468,7 +579,7 @@ router.get('/:tenantId', authenticate, requireRole(['admin']), tenantController.
  *       404:
  *         description: Tenant not found
  */
-router.put('/:tenantId', authenticate, requireRole(['admin']), tenantController.updateTenant);
+router.put('/:tenantId', authenticate, requireTenantManagement, tenantController.updateTenant.bind(tenantController));
 
 /**
  * @swagger
@@ -507,7 +618,7 @@ router.put('/:tenantId', authenticate, requireRole(['admin']), tenantController.
  *       404:
  *         description: Tenant not found
  */
-router.delete('/:tenantId', authenticate, requireRole(['admin']), tenantController.deleteTenant);
+router.delete('/:tenantId', authenticate, requireTenantManagement, tenantController.deleteTenant);
 
 /**
  * @swagger
@@ -561,7 +672,7 @@ router.delete('/:tenantId', authenticate, requireRole(['admin']), tenantControll
  *       404:
  *         description: Tenant not found
  */
-router.patch('/:tenantId/status', authenticate, requireRole(['admin']), tenantController.toggleTenantStatus);
+router.patch('/:tenantId/status', authenticate, requireTenantManagement, tenantController.toggleTenantStatus);
 
 /**
  * @swagger
@@ -598,6 +709,6 @@ router.patch('/:tenantId/status', authenticate, requireRole(['admin']), tenantCo
  *       404:
  *         description: Tenant not found
  */
-router.get('/:tenantId/stats', authenticate, requireRole(['admin']), tenantController.getTenantStats);
+router.get('/:tenantId/stats', authenticate, requireTenantAccess, tenantController.getTenantStats);
 
 module.exports = router;

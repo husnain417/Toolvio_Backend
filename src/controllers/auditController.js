@@ -107,6 +107,7 @@ class AuditController {
         userId: req.user?.id,
         userAgent: req.get('User-Agent'),
         ipAddress: req.ip,
+        tenantId: req.user?.tenantId,
         metadata: { reason }
       };
 
@@ -132,7 +133,7 @@ class AuditController {
     try {
       const { schemaName } = req.params;
       const { timeframe = '30d', operation } = req.query;
-
+      
       const stats = await AuditService.getAuditStats(schemaName, { timeframe, operation });
       successResponse(res, stats, 'Audit statistics retrieved successfully');
     } catch (error) {
@@ -198,7 +199,7 @@ class AuditController {
       const { documents } = req.body;
       const { reason } = req.body;
       const auditContext = {
-        userId: req.user?.id,
+        userId: req.user?._id,
         userAgent: req.get('User-Agent'),
         ipAddress: req.ip,
         metadata: { reason, bulkOperation: true }

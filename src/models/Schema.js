@@ -1,10 +1,16 @@
 const mongoose = require('mongoose');
 
 const SchemaDefinitionSchema = new mongoose.Schema({
+  // Tenant isolation
+  tenantId: {
+    type: String,
+    required: true,
+    trim: true,
+    index: true
+  },
   name: {
     type: String,
     required: true,
-    unique: true,
     lowercase: true,
     trim: true,
     match: [/^[a-z][a-z0-9_]*$/, 'Schema name must start with letter and contain only lowercase letters, numbers, and underscores']
@@ -164,6 +170,11 @@ SchemaDefinitionSchema.pre('save', function(next) {
   }
   next();
 });
+
+// FIXED: Only compound index for tenant-scoped queries
+SchemaDefinitionSchema.index({ tenantId: 1, name: 1 }, { unique: true });
+SchemaDefinitionSchema.index({ tenantId: 1, isActive: 1 });
+// REMOVED: The problematic unique index on name alone
 
 // Virtual for collection name (read-only)
 SchemaDefinitionSchema.virtual('collectionNameVirtual').get(function() {

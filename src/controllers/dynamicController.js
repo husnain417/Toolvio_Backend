@@ -63,10 +63,13 @@ class DynamicController {
       
       console.log('Options being passed to service:', options);
       
+      // Get audit context
+      const auditContext = req.auditContext || {};
+      
       // Choose service method based on includeAudit flag
       const result = includeAudit === 'true' 
-        ? await DynamicCrudService.getRecordsWithAudit(schemaName, options)
-        : await DynamicCrudService.getRecords(schemaName, options);
+        ? await DynamicCrudService.getRecordsWithAudit(schemaName, options, auditContext)
+        : await DynamicCrudService.getRecords(schemaName, options, auditContext);
       
       successResponse(res, result, 'Records retrieved successfully');
     } catch (error) {
@@ -88,7 +91,10 @@ class DynamicController {
       // Parse population fields
       const populateFields = populate ? populate.split(',').map(field => field.trim()) : [];
       
-      const record = await DynamicCrudService.getRecordById(schemaName, recordId, populateFields);
+      // Get audit context
+      const auditContext = req.auditContext || {};
+      
+      const record = await DynamicCrudService.getRecordById(schemaName, recordId, populateFields, auditContext);
       
       if (!record) {
         return errorResponse(res, `Record with ID '${recordId}' not found`, 404);
@@ -136,8 +142,16 @@ class DynamicController {
       // Get audit context
       const auditContext = req.auditContext || {};
       
+      // CRITICAL: Ensure tenantId is in auditContext
+      const enhancedAuditContext = {
+        ...auditContext,
+        tenantId: req.user?.tenantId // Explicitly set this
+      };
+      
+      console.log('🔍 CONTROLLER AUDIT CONTEXT:', enhancedAuditContext);
+      
       // Simple service call with timeout
-      const createPromise = DynamicCrudService.createRecord(schemaName, recordData, auditContext);
+      const createPromise = DynamicCrudService.createRecord(schemaName, recordData, enhancedAuditContext);
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
           reject(new Error('Create record operation timed out after 10 seconds'));
@@ -206,12 +220,18 @@ class DynamicController {
       
       // Get audit context
       const auditContext = req.auditContext || {};
+      
+      // CRITICAL: Ensure tenantId is in auditContext
+      const enhancedAuditContext = {
+        ...auditContext,
+        tenantId: req.user?.tenantId // Explicitly set this
+      };
 
       const updatedRecord = await DynamicCrudService.updateRecord(
         schemaName, 
         recordId, 
         updateData, 
-        auditContext
+        enhancedAuditContext
       );
       
       successResponse(res, updatedRecord, 'Record updated successfully', 200, {
@@ -237,8 +257,17 @@ class DynamicController {
       const { schemaName, recordId } = req.params;
       const updateData = req.body;
 
+      // Get audit context
+      const auditContext = req.auditContext || {};
+      
+      // CRITICAL: Ensure tenantId is in auditContext
+      const enhancedAuditContext = {
+        ...auditContext,
+        tenantId: req.user?.tenantId // Explicitly set this
+      };
+
       // Get existing record first
-      const existingRecord = await DynamicCrudService.getRecordById(schemaName, recordId);
+      const existingRecord = await DynamicCrudService.getRecordById(schemaName, recordId, [], enhancedAuditContext);
       if (!existingRecord) {
         return errorResponse(res, `Record with ID '${recordId}' not found`, 404);
       }
@@ -253,14 +282,11 @@ class DynamicController {
       delete mergedData.createdAt;
       delete mergedData.updatedAt;
 
-      // Get audit context
-      const auditContext = req.auditContext || {};
-
       const updatedRecord = await DynamicCrudService.updateRecord(
         schemaName, 
         recordId, 
         mergedData, 
-        auditContext
+        enhancedAuditContext
       );
       
       successResponse(res, updatedRecord, 'Record updated successfully', 200, {
@@ -289,7 +315,13 @@ class DynamicController {
       // Get audit context
       const auditContext = req.auditContext || {};
       
-      await DynamicCrudService.deleteRecord(schemaName, recordId, auditContext);
+      // CRITICAL: Ensure tenantId is in auditContext
+      const enhancedAuditContext = {
+        ...auditContext,
+        tenantId: req.user?.tenantId // Explicitly set this
+      };
+      
+      await DynamicCrudService.deleteRecord(schemaName, recordId, enhancedAuditContext);
       
       successResponse(res, null, 'Record deleted successfully', 200, {
         auditLogged: true,
@@ -350,7 +382,10 @@ class DynamicController {
       const { schemaName } = req.params;
       const filter = req.query;
 
-      const count = await DynamicCrudService.getRecordCount(schemaName, filter);
+      // Get audit context
+      const auditContext = req.auditContext || {};
+
+      const count = await DynamicCrudService.getRecordCount(schemaName, filter, auditContext);
       successResponse(res, { count }, 'Record count retrieved successfully');
     } catch (error) {
       errorResponse(res, error.message, 400);
@@ -380,8 +415,13 @@ class DynamicController {
         }));
         searchFilter.$or = searchConditions;
       } else {
-        // Search in all string fields
-        searchFilter.$text = { $search: q };
+        // Use regex search instead of text search for dynamic collections
+        // This searches in common string fields without requiring text indexes
+        const commonStringFields = ['title', 'name', 'description', 'email', 'firstName', 'lastName', 'jobNumber', 'status'];
+        const searchConditions = commonStringFields.map(field => ({
+          [field]: { $regex: q, $options: 'i' }
+        }));
+        searchFilter.$or = searchConditions;
       }
 
       const options = {
@@ -398,7 +438,10 @@ class DynamicController {
         }
       }
 
-      const result = await DynamicCrudService.getRecords(schemaName, options);
+      // Get audit context
+      const auditContext = req.auditContext || {};
+
+      const result = await DynamicCrudService.getRecords(schemaName, options, auditContext);
       successResponse(res, result, 'Search completed successfully');
     } catch (error) {
       errorResponse(res, error.message, 400);
@@ -434,10 +477,13 @@ class DynamicController {
         }
       }
 
-      const totalCount = await DynamicCrudService.getRecordCount(schemaName);
+      // Get audit context
+      const auditContext = req.auditContext || {};
+
+      const totalCount = await DynamicCrudService.getRecordCount(schemaName, {}, auditContext);
       const recentCount = await DynamicCrudService.getRecordCount(schemaName, {
         createdAt: timeRange
-      });
+      }, auditContext);
 
       const stats = {
         schemaName,

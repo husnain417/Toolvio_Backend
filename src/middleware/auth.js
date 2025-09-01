@@ -42,17 +42,7 @@ const authenticate = async (req, res, next) => {
       });
     }
 
-    // Verify tenant is still active
-    const tenant = await Tenant.findOne({ tenantId: user.tenantId });
-    if (!tenant || !tenant.isActive) {
-      return res.status(403).json({
-        success: false,
-        message: 'Tenant is inactive',
-        code: 'TENANT_INACTIVE'
-      });
-    }
-
-    // Set user context
+    // Set user context with JWT data as fallback
     req.user = {
       _id: user._id,
       username: user.username,
@@ -60,22 +50,55 @@ const authenticate = async (req, res, next) => {
       firstName: user.firstName,
       lastName: user.lastName,
       role: user.role,
-      tenantId: user.tenantId,
+      tenantId: user.tenantId || decoded.tenantId,  // Use JWT as fallback
+      isSystemAdmin: user.isSystemAdmin || user.role === 'system_admin' || decoded.isSystemAdmin,
       permissions: user.getEffectivePermissions()
     };
 
-    // Set tenant context
-    req.tenant = {
-      _id: tenant._id,
-      tenantId: tenant.tenantId,
-      name: tenant.name,
-      displayName: tenant.displayName,
-      settings: tenant.settings,
-      subscriptionStatus: tenant.subscriptionStatus
-    };
+    console.log('🔍 DEBUG: User context set:', {
+      role: req.user.role,
+      isSystemAdmin: req.user.isSystemAdmin,
+      tenantId: req.user.tenantId
+    });
+
+    // For system admin, skip tenant validation
+    if (req.user.isSystemAdmin) {
+      console.log('✅ DEBUG: System admin detected, skipping tenant validation');
+      req.user.isSystemAdmin = true;
+      next();
+      return;
+    }
+
+    // Verify tenant is still active for non-system users
+    if (req.user.tenantId) {
+      console.log('🔍 DEBUG: Checking tenant for non-system user:', req.user.tenantId);
+      const tenant = await Tenant.findOne({ tenantId: req.user.tenantId });
+      if (!tenant || !tenant.isActive) {
+        console.log('❌ DEBUG: Tenant validation failed:', {
+          tenantExists: !!tenant,
+          isActive: tenant?.isActive
+        });
+        return res.status(403).json({
+          success: false,
+          message: 'Tenant is inactive',
+          code: 'TENANT_INACTIVE'
+        });
+      }
+
+      // Set tenant context
+      req.tenant = {
+        _id: tenant._id,
+        tenantId: tenant.tenantId,
+        name: tenant.name,
+        displayName: tenant.displayName,
+        settings: tenant.settings,
+        subscriptionStatus: tenant.subscriptionStatus
+      };
+    }
 
     next();
   } catch (error) {
+    console.error('❌ DEBUG: Error in authenticate middleware:', error);
     return res.status(401).json({
       success: false,
       message: 'Invalid or expired token',
@@ -91,7 +114,10 @@ const authenticate = async (req, res, next) => {
  */
 const authorize = (resource, action) => {
   return (req, res, next) => {
+    console.log('🔍 DEBUG: authorize START - resource:', resource, 'action:', action);
+    
     if (!req.user) {
+      console.log('❌ DEBUG: No user in authorize');
       return res.status(401).json({
         success: false,
         message: 'Authentication required',
@@ -99,21 +125,72 @@ const authorize = (resource, action) => {
       });
     }
 
-    // Admin has all permissions
-    if (req.user.role === 'admin') {
+    // System admin has all permissions
+    if (req.user.role === 'system_admin' || req.user.isSystemAdmin) {
+      console.log('✅ DEBUG: System admin in authorize, allowing access');
       return next();
     }
+
+    console.log('🔍 DEBUG: authorize - checking permissions:', req.user.permissions[resource]);
+    console.log('🔍 DEBUG: authorize - checking specific permission:', req.user.permissions[resource]?.[action]);
 
     // Check specific permission
     if (req.user.permissions[resource] && req.user.permissions[resource][action]) {
+      console.log('✅ DEBUG: authorize - permission granted');
       return next();
     }
 
+    console.log('❌ DEBUG: authorize - permission denied');
     return res.status(403).json({
       success: false,
       message: `Insufficient permissions: ${resource}.${action}`,
       code: 'INSUFFICIENT_PERMISSIONS',
       required: `${resource}.${action}`,
+      userRole: req.user.role
+    });
+  };
+};
+
+/**
+ * System-level authorization middleware - checks if user has system permission
+ * @param {string} action - System action to check permission for
+ */
+const requireSystemPermission = (action) => {
+  return (req, res, next) => {
+    console.log('🔍 DEBUG: requireSystemPermission called with action:', action);
+    console.log('🔍 DEBUG: User in requireSystemPermission:', {
+      role: req.user?.role,
+      isSystemAdmin: req.user?.isSystemAdmin,
+      permissions: req.user?.permissions
+    });
+
+    if (!req.user) {
+      console.log('❌ DEBUG: No user in requireSystemPermission');
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+        code: 'AUTH_REQUIRED'
+      });
+    }
+
+    // System admin has all system permissions
+    if (req.user.role === 'system_admin' || req.user.isSystemAdmin) {
+      console.log('✅ DEBUG: System admin detected in requireSystemPermission, allowing access');
+      return next();
+    }
+
+    // Check specific system permission
+    if (req.user.permissions.system && req.user.permissions.system[action]) {
+      console.log('✅ DEBUG: User has specific system permission:', action);
+      return next();
+    }
+
+    console.log('❌ DEBUG: User lacks system permission:', action);
+    return res.status(403).json({
+      success: false,
+      message: `Insufficient system permissions: ${action}`,
+      code: 'INSUFFICIENT_SYSTEM_PERMISSIONS',
+      required: `system.${action}`,
       userRole: req.user.role
     });
   };
@@ -149,9 +226,13 @@ const requireRole = (allowedRoles) => {
 
 /**
  * Tenant isolation middleware - ensures user can only access their tenant's data
+ * System admin can access all tenants
  */
 const requireTenantAccess = (req, res, next) => {
+  console.log('🔍 DEBUG: requireTenantAccess START');
+  
   if (!req.user) {
+    console.log('❌ DEBUG: No user in requireTenantAccess');
     return res.status(401).json({
       success: false,
       message: 'Authentication required',
@@ -159,10 +240,19 @@ const requireTenantAccess = (req, res, next) => {
     });
   }
 
+  // System admin can access all tenants
+  if (req.user.role === 'system_admin' || req.user.isSystemAdmin) {
+    console.log('✅ DEBUG: System admin in requireTenantAccess, allowing access');
+    return next();
+  }
+
   // Extract tenant ID from request (could be in params, body, or query)
   const requestTenantId = req.params.tenantId || req.body.tenantId || req.query.tenantId;
+  console.log('🔍 DEBUG: requireTenantAccess - requestTenantId:', requestTenantId);
+  console.log('🔍 DEBUG: requireTenantAccess - user.tenantId:', req.user.tenantId);
   
   if (requestTenantId && requestTenantId !== req.user.tenantId) {
+    console.log('❌ DEBUG: Tenant access denied - different tenant');
     return res.status(403).json({
       success: false,
       message: 'Access denied to different tenant',
@@ -172,7 +262,52 @@ const requireTenantAccess = (req, res, next) => {
     });
   }
 
+  console.log('✅ DEBUG: requireTenantAccess - calling next()');
   next();
+};
+
+/**
+ * Tenant management middleware - ensures user can manage the specified tenant
+ * System admin can manage all tenants, tenant admin can manage their own
+ */
+const requireTenantManagement = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required',
+      code: 'AUTH_REQUIRED'
+    });
+  }
+
+  // System admin can manage all tenants
+  if (req.user.role === 'system_admin' || req.user.isSystemAdmin) {
+    return next();
+  }
+
+  // Extract tenant ID from request
+  const requestTenantId = req.params.tenantId || req.body.tenantId || req.query.tenantId;
+  
+  if (!requestTenantId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Tenant ID is required',
+      code: 'TENANT_ID_REQUIRED'
+    });
+  }
+
+  // Tenant admin can only manage their own tenant
+  if (req.user.role === 'admin' && req.user.tenantId === requestTenantId) {
+    return next();
+  }
+
+  return res.status(403).json({
+    success: false,
+    message: 'Insufficient permissions to manage this tenant',
+    code: 'TENANT_MANAGEMENT_DENIED',
+    userRole: req.user.role,
+    userTenant: req.user.tenantId,
+    requestTenant: requestTenantId
+  });
 };
 
 /**
@@ -195,26 +330,30 @@ const optionalAuth = async (req, res, next) => {
           lastName: user.lastName,
           role: user.role,
           tenantId: user.tenantId,
+          isSystemAdmin: user.isSystemAdmin || user.role === 'system_admin',
           permissions: user.getEffectivePermissions()
         };
 
-        const tenant = await Tenant.findOne({ tenantId: user.tenantId });
-        if (tenant && tenant.isActive) {
-          req.tenant = {
-            _id: tenant._id,
-            tenantId: tenant.tenantId,
-            name: tenant.name,
-            displayName: tenant.displayName,
-            settings: tenant.settings,
-            subscriptionStatus: tenant.subscriptionStatus
-          };
+        // Set tenant context for non-system users
+        if (user.tenantId && user.role !== 'system_admin' && !user.isSystemAdmin) {
+          const tenant = await Tenant.findOne({ tenantId: user.tenantId });
+          if (tenant && tenant.isActive) {
+            req.tenant = {
+              _id: tenant._id,
+              tenantId: tenant.tenantId,
+              name: tenant.name,
+              displayName: tenant.displayName,
+              settings: tenant.settings,
+              subscriptionStatus: tenant.subscriptionStatus
+            };
+          }
         }
       }
     }
-    
+
     next();
   } catch (error) {
-    // Continue without authentication if token is invalid
+    // Continue without authentication
     next();
   }
 };
@@ -269,11 +408,73 @@ const tenantRateLimit = (req, res, next) => {
   next();
 };
 
+/**
+ * Schema-specific authorization middleware
+ * Maps schema names to permission resources and checks appropriate permissions
+ * @param {string} action - Action to check permission for
+ */
+const authorizeSchemaAction = (action) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+        code: 'AUTH_REQUIRED'
+      });
+    }
+
+    // System admin has all permissions
+    if (req.user.role === 'system_admin' || req.user.isSystemAdmin) {
+      return next();
+    }
+
+    const schemaName = req.params.schemaName;
+    
+    // Map schema names to permission resources
+    const schemaPermissionMap = {
+      'customer': 'customers',
+      'customers': 'customers',
+      'job': 'jobs', 
+      'jobs': 'jobs',
+      'invoice': 'invoices',
+      'invoices': 'invoices',
+      'user': 'users',
+      'users': 'users'
+    };
+
+    const permissionResource = schemaPermissionMap[schemaName];
+    
+    if (!permissionResource) {
+      // For unknown schemas, fall back to generic data permissions
+      if (req.user.permissions.data && req.user.permissions.data[action]) {
+        return next();
+      }
+    } else {
+      // Check schema-specific permission
+      if (req.user.permissions[permissionResource] && req.user.permissions[permissionResource][action]) {
+        return next();
+      }
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: `Insufficient permissions: ${permissionResource || 'data'}.${action}`,
+      code: 'INSUFFICIENT_PERMISSIONS',
+      required: `${permissionResource || 'data'}.${action}`,
+      userRole: req.user.role,
+      schemaName
+    });
+  };
+};
+
 module.exports = {
   authenticate,
   authorize,
+  requireSystemPermission,
   requireRole,
   requireTenantAccess,
+  requireTenantManagement,
   optionalAuth,
-  tenantRateLimit
+  tenantRateLimit,
+  authorizeSchemaAction
 };

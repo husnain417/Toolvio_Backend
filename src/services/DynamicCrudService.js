@@ -20,8 +20,15 @@ class DynamicCrudService {
     console.log('Data:', JSON.stringify(data, null, 2));
     
     try {
+      console.log('🔍 TENANT DEBUG:', {
+        'auditContext.tenantId': auditContext.tenantId,
+        'available keys': Object.keys(auditContext)
+      });
+      
       console.log('Step 1: Getting schema...');
-      const schema = await SchemaService.getSchemaByName(schemaName);
+      console.log('DEBUG: auditContext.tenantId:', auditContext.tenantId);
+      console.log('DEBUG: auditContext:', auditContext);
+      const schema = await SchemaService.getSchemaByName(auditContext.tenantId, schemaName);
       console.log('Schema found:', !!schema);
       
       if (!schema) {
@@ -67,6 +74,14 @@ class DynamicCrudService {
 
       console.log('Step 7: Logging audit trail...');
       try {
+        console.log('🔍 AUDIT TRACE:', {
+          location: 'DynamicCrudService.createRecord',
+          tenantId: auditContext?.tenantId || 'MISSING',
+          schemaName: schemaName,
+          documentId: savedRecord._id,
+          timestamp: new Date().toISOString()
+        });
+        
         // Queue audit operation instead of direct processing
         const auditJob = await QueueService.addAuditJob({
           documentId: savedRecord._id,
@@ -78,6 +93,7 @@ class DynamicCrudService {
           userId: auditContext.userId,
           userAgent: auditContext.userAgent,
           ipAddress: auditContext.ipAddress,
+          tenantId: auditContext.tenantId, // CRITICAL: Pass tenantId from audit context
           metadata: {
             source: 'api',
             ...auditContext.metadata
@@ -125,7 +141,7 @@ class DynamicCrudService {
     console.log('=== DynamicCrudService.updateRecord START ===');
     
     try {
-      const schema = await SchemaService.getSchemaByName(schemaName);
+      const schema = await SchemaService.getSchemaByName(auditContext.tenantId, schemaName);
       if (!schema) {
         throw new Error(`Schema '${schemaName}' not found`);
       }
@@ -182,6 +198,7 @@ class DynamicCrudService {
           userId: auditContext.userId,
           userAgent: auditContext.userAgent,
           ipAddress: auditContext.ipAddress,
+          tenantId: auditContext.tenantId, // CRITICAL: Pass tenantId from audit context
           metadata: {
             source: 'api',
             ...auditContext.metadata
@@ -224,7 +241,7 @@ class DynamicCrudService {
     console.log('=== DynamicCrudService.deleteRecord START ===');
     
     try {
-      const schema = await SchemaService.getSchemaByName(schemaName);
+      const schema = await SchemaService.getSchemaByName(auditContext.tenantId, schemaName);
       if (!schema) {
         throw new Error(`Schema '${schemaName}' not found`);
       }
@@ -261,6 +278,7 @@ class DynamicCrudService {
           userId: auditContext.userId,
           userAgent: auditContext.userAgent,
           ipAddress: auditContext.ipAddress,
+          tenantId: auditContext.tenantId, // CRITICAL: Pass tenantId from audit context
           metadata: {
             source: 'api',
             ...auditContext.metadata
@@ -288,8 +306,8 @@ class DynamicCrudService {
    * @param {Object} options - Query options
    * @returns {Promise<Object>} - Records with pagination info
    */
-  async getRecords(schemaName, options = {}) {
-    const schema = await SchemaService.getSchemaByName(schemaName);
+  async getRecords(schemaName, options = {}, auditContext = {}) {
+    const schema = await SchemaService.getSchemaByName(auditContext.tenantId, schemaName);
     if (!schema) {
       throw new Error(`Schema '${schemaName}' not found`);
     }
@@ -353,8 +371,8 @@ class DynamicCrudService {
    * @param {string} recordId - Record ID
    * @returns {Promise<Object|null>} - Record or null
    */
-  async getRecordById(schemaName, recordId, populateFields = []) {
-    const schema = await SchemaService.getSchemaByName(schemaName);
+  async getRecordById(schemaName, recordId, populateFields = [], auditContext = {}) {
+    const schema = await SchemaService.getSchemaByName(auditContext.tenantId, schemaName);
     if (!schema) {
       throw new Error(`Schema '${schemaName}' not found`);
     }
@@ -385,7 +403,7 @@ class DynamicCrudService {
     console.log('=== DynamicCrudService.bulkCreateRecords START ===');
     
     try {
-      const schema = await SchemaService.getSchemaByName(schemaName);
+      const schema = await SchemaService.getSchemaByName(auditContext.tenantId, schemaName);
       if (!schema) {
         throw new Error(`Schema '${schemaName}' not found`);
       }
@@ -435,6 +453,7 @@ class DynamicCrudService {
           userId: auditContext.userId,
           userAgent: auditContext.userAgent,
           ipAddress: auditContext.ipAddress,
+          tenantId: auditContext.tenantId, // CRITICAL: Pass tenantId from audit context
           metadata: {
             source: 'api',
             bulkOperation: true,
@@ -465,8 +484,8 @@ class DynamicCrudService {
    * @param {Object} filter - Filter conditions
    * @returns {Promise<number>} - Record count
    */
-  async getRecordCount(schemaName, filter = {}) {
-    const schema = await SchemaService.getSchemaByName(schemaName);
+  async getRecordCount(schemaName, filter = {}, auditContext = {}) {
+    const schema = await SchemaService.getSchemaByName(auditContext.tenantId, schemaName);
     if (!schema) {
       throw new Error(`Schema '${schemaName}' not found`);
     }

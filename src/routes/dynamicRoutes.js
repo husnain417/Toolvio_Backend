@@ -2,15 +2,15 @@ const express = require('express');
 const dynamicController = require('../controllers/dynamicController');
 const { schemaExists, validateRecordId, validatePagination, validateDynamicData } = require('../middleware/validateSchema');
 const { captureAuditContext, captureDocumentState } = require('../middleware/Audit');
-const { authenticate, authorize, requireTenantAccess } = require('../middleware/auth');
+const { authenticate, authorize, requireTenantAccess, authorizeSchemaAction } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Apply audit context capture to all routes
-router.use(captureAuditContext);
-
 // Apply authentication and tenant access to all routes
 router.use(authenticate, requireTenantAccess);
+
+// Apply audit context capture AFTER authentication
+router.use(captureAuditContext);
 
 // Static routes FIRST (before parameterized routes)
 router.get('/:schemaName/count', 
@@ -55,7 +55,7 @@ router.get('/:schemaName/:recordId',
 
 // Create record (with audit logging built into service)
 router.post('/:schemaName', 
-  authorize('data', 'write'),
+  authorizeSchemaAction('create'),
   schemaExists(), 
   validateDynamicData, 
   dynamicController.createRecord
@@ -63,7 +63,7 @@ router.post('/:schemaName',
 
 // Update record (with audit logging built into service)
 router.put('/:schemaName/:recordId', 
-  authorize('data', 'write'),
+  authorizeSchemaAction('update'),
   schemaExists(), 
   validateRecordId(), 
   validateDynamicData,
@@ -73,7 +73,7 @@ router.put('/:schemaName/:recordId',
 
 // Patch record (with audit logging built into service)
 router.patch('/:schemaName/:recordId', 
-  authorize('data', 'write'),
+  authorizeSchemaAction('update'),
   schemaExists(), 
   validateRecordId(),
   captureDocumentState, // Capture state before update
@@ -82,7 +82,7 @@ router.patch('/:schemaName/:recordId',
 
 // Delete record (with audit logging built into service)
 router.delete('/:schemaName/:recordId', 
-  authorize('data', 'delete'),
+  authorizeSchemaAction('delete'),
   schemaExists(), 
   validateRecordId(),
   captureDocumentState, // Capture state before deletion

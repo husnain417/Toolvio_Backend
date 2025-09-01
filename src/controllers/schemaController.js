@@ -14,13 +14,14 @@ class SchemaController {
   async getAllSchemas(req, res) {
     try {
       const { active } = req.query;
+      const tenantId = req.user.tenantId; // Source from JWT
       const filters = {};
       
       if (active !== undefined) {
         filters.active = active === 'true';
       }
 
-      const schemas = await SchemaService.getAllSchemas(filters);
+      const schemas = await SchemaService.getAllSchemas(tenantId, filters);
       successResponse(res, schemas, 'Schemas retrieved successfully');
     } catch (error) {
       errorResponse(res, error.message, 500);
@@ -35,7 +36,8 @@ class SchemaController {
   async getSchemaByName(req, res) {
     try {
       const { name } = req.params;
-      const schema = await SchemaService.getSchemaByName(name);
+      const tenantId = req.user.tenantId; // Source from JWT
+      const schema = await SchemaService.getSchemaByName(tenantId, name);
       
       if (!schema) {
         return errorResponse(res, `Schema '${name}' not found`, 404);
@@ -55,10 +57,16 @@ class SchemaController {
   async createSchema(req, res) {
     try {
       const { name, displayName, description, collectionName, jsonSchema } = req.body;
+      const tenantId = req.user.tenantId; // Source from JWT, not request body
 
       // Basic validation
       if (!name || !displayName || !jsonSchema) {
         return errorResponse(res, 'Name, displayName, and jsonSchema are required', 400);
+      }
+
+      // Ensure tenant context is available
+      if (!tenantId) {
+        return errorResponse(res, 'Tenant context is required', 400);
       }
 
       const schema = await SchemaService.createSchema({
@@ -67,7 +75,7 @@ class SchemaController {
         description,
         collectionName,
         jsonSchema
-      });
+      }, tenantId);
 
       successResponse(res, schema, 'Schema created successfully', 201);
     } catch (error) {
@@ -84,8 +92,9 @@ class SchemaController {
     try {
       const { name } = req.params;
       const { displayName, description, jsonSchema } = req.body;
+      const tenantId = req.user.tenantId; // Source from JWT
 
-      const updatedSchema = await SchemaService.updateSchema(name, {
+      const updatedSchema = await SchemaService.updateSchema(tenantId, name, {
         displayName,
         description,
         jsonSchema
@@ -105,7 +114,8 @@ class SchemaController {
   async deleteSchema(req, res) {
     try {
       const { name } = req.params;
-      await SchemaService.deleteSchema(name);
+      const tenantId = req.user.tenantId; // Source from JWT
+      await SchemaService.deleteSchema(tenantId, name);
       successResponse(res, null, 'Schema deleted successfully');
     } catch (error) {
       errorResponse(res, error.message, 400);
@@ -120,7 +130,8 @@ class SchemaController {
   async hotReloadSchema(req, res) {
     try {
       const { name } = req.params;
-      const reloaded = await SchemaService.hotReloadSchema(name);
+      const tenantId = req.user.tenantId; // Source from JWT
+      const reloaded = await SchemaService.hotReloadSchema(tenantId, name);
       
       if (!reloaded) {
         return errorResponse(res, `Schema '${name}' not found or could not be reloaded`, 404);
@@ -140,7 +151,8 @@ class SchemaController {
   async getSchemaStats(req, res) {
     try {
       const { name } = req.params;
-      const schema = await SchemaService.getSchemaByName(name);
+      const tenantId = req.user.tenantId; // Source from JWT
+      const schema = await SchemaService.getSchemaByName(tenantId, name);
       
       if (!schema) {
         return errorResponse(res, `Schema '${name}' not found`, 404);
@@ -154,7 +166,8 @@ class SchemaController {
         isActive: schema.isActive,
         createdAt: schema.createdAt,
         updatedAt: schema.updatedAt,
-        collectionName: schema.collectionName
+        collectionName: schema.collectionName,
+        tenantId: schema.tenantId
       };
 
       successResponse(res, stats, 'Schema statistics retrieved successfully');

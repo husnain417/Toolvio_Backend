@@ -1,6 +1,7 @@
 const AuditLog = require('../models/AuditLog');
 const CollectionGenerator = require('./CollectionGenerator');
 const SchemaService = require('./SchemaService');
+const SyncVersion = require('../models/SyncVersion');
 
 class AuditService {
   /**
@@ -22,8 +23,24 @@ class AuditService {
         userId,
         userAgent,
         ipAddress,
+        tenantId,
         metadata = {}
       } = auditData;
+
+      // Validate required fields
+      if (!documentId || !schemaName || !operation) {
+        throw new Error('Missing required audit fields: documentId, schemaName, operation');
+      }
+
+      // Generate deduplication key to prevent duplicate audit logs
+      const deduplicationKey = this.generateDeduplicationKey(documentId, operation, metadata);
+
+      // Check if audit log already exists for this operation
+      const existingAudit = await AuditLog.findOne({ deduplicationKey });
+      if (existingAudit) {
+        console.log('⚠️  Duplicate audit log detected, skipping:', deduplicationKey);
+        return existingAudit;
+      }
 
       // Calculate version number
       const latestVersion = await this.getLatestVersion(documentId, schemaName);
@@ -35,7 +52,14 @@ class AuditService {
         changedFields = this.calculateChangedFields(previousState, currentState);
       }
 
-      // Create audit log entry
+      // Get sync versions for this change
+      const [globalVersion, tenantVersion, schemaVersion] = await Promise.all([
+        SyncVersion.getNextVersion('global', 'global'),
+        SyncVersion.getNextVersion('tenant', tenantId || 'default'),
+        SyncVersion.getNextVersion('schema', `${tenantId || 'default'}:${schemaName}`)
+      ]);
+
+      // Create audit log entry with sync versions
       const auditLog = new AuditLog({
         documentId,
         schemaName,
@@ -49,7 +73,14 @@ class AuditService {
         ipAddress,
         version,
         metadata,
-        timestamp: new Date()
+        timestamp: new Date(),
+        deduplicationKey,
+        // Sync-specific fields
+        globalSyncVersion: globalVersion,
+        tenantSyncVersion: tenantVersion,
+        schemaSyncVersion: schemaVersion,
+        tenantId: tenantId || 'default',
+        syncStatus: 'pending'
       });
 
       const savedAuditLog = await auditLog.save();
@@ -60,6 +91,19 @@ class AuditService {
       console.error('❌ Error logging audit change:', error);
       throw new Error(`Failed to log audit change: ${error.message}`);
     }
+  }
+
+  /**
+   * Generate deduplication key for audit logs
+   * @param {string} documentId - Document ID
+   * @param {string} operation - Operation type
+   * @param {Object} metadata - Metadata
+   * @returns {string} - Deduplication key
+   */
+  generateDeduplicationKey(documentId, operation, metadata = {}) {
+    const source = metadata.source || 'unknown';
+    const timestamp = Math.floor(Date.now() / 1000); // Round to nearest second
+    return `${documentId}:${operation}:${source}:${timestamp}`;
   }
 
   /**
@@ -246,6 +290,7 @@ class AuditService {
         userId: revertOptions.userId,
         userAgent: revertOptions.userAgent,
         ipAddress: revertOptions.ipAddress,
+        tenantId: revertOptions.tenantId,
         metadata: {
           isRevert: true,
           revertedToVersion: targetVersion,
@@ -306,7 +351,7 @@ class AuditService {
    * @returns {Promise<Object>} - Audit statistics
    */
   async getAuditStats(schemaName, options = {}) {
-    const { timeframe = '30d' } = options;
+    const { timeframe = '30d', operation } = options;
 
     // Calculate time range
     let timeRange = {};
@@ -328,6 +373,11 @@ class AuditService {
     const baseQuery = { schemaName };
     if (Object.keys(timeRange).length > 0) {
       baseQuery.timestamp = timeRange;
+    }
+
+    // Add operation filter if specified
+    if (operation) {
+      baseQuery.operation = operation;
     }
 
     // Aggregate statistics
@@ -353,6 +403,7 @@ class AuditService {
     return {
       schemaName,
       timeframe,
+      operation: operation || 'all',
       totalAuditLogs,
       uniqueDocuments: uniqueDocuments.length,
       operations: {
@@ -440,6 +491,379 @@ class AuditService {
 
     const result = await AuditLog.deleteMany(query);
     return { deleted: result.deletedCount };
+  }
+
+  /**
+   * Get all versions of a document
+   * @param {string} documentId - Document ID
+   * @param {string} schemaName - Schema name
+   * @param {Object} options - Query options
+   * @returns {Promise<Object>} - Document versions with pagination
+   */
+  async getDocumentVersions(documentId, schemaName, options = {}) {
+    const { page = 1, limit = 50 } = options;
+
+    const query = { documentId, schemaName };
+    const skip = (page - 1) * limit;
+    const total = await AuditLog.countDocuments(query);
+    const totalPages = Math.ceil(total / limit);
+
+    const versions = await AuditLog.find(query)
+      .select('version timestamp operation currentState changedFields metadata userId')
+      .sort({ version: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    return {
+      documentId,
+      schemaName,
+      versions: versions.map(version => ({
+        version: version.version,
+        timestamp: version.timestamp,
+        operation: version.operation,
+        state: version.currentState,
+        changedFields: version.changedFields,
+        metadata: version.metadata,
+        userId: version.userId
+      })),
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalRecords: total,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+        limit
+      }
+    };
+  }
+
+  /**
+   * Compare two versions of a document
+   * @param {string} documentId - Document ID
+   * @param {string} schemaName - Schema name
+   * @param {number} version1 - First version number
+   * @param {number} version2 - Second version number
+   * @returns {Promise<Object>} - Comparison result
+   */
+  async compareDocumentVersions(documentId, schemaName, version1, version2) {
+    // Validate version numbers
+    if (version1 === version2) {
+      throw new Error('Cannot compare a version with itself');
+    }
+
+    if (version1 < 0 || version2 < 0) {
+      throw new Error('Version numbers must be positive integers');
+    }
+
+    // Get both versions
+    const [version1Data, version2Data] = await Promise.all([
+      AuditLog.findOne({ documentId, schemaName, version: version1 }).lean(),
+      AuditLog.findOne({ documentId, schemaName, version: version2 }).lean()
+    ]);
+
+    if (!version1Data) {
+      throw new Error(`Version ${version1} not found for document ${documentId}`);
+    }
+
+    if (!version2Data) {
+      throw new Error(`Version ${version2} not found for document ${documentId}`);
+    }
+
+    // Determine which version is newer
+    const newerVersion = version1 > version2 ? version1 : version2;
+    const olderVersion = version1 > version2 ? version2 : version1;
+    const newerData = version1 > version2 ? version1Data : version2Data;
+    const olderData = version1 > version2 ? version2Data : version1Data;
+
+    // Compare the states
+    const comparison = this.compareStates(olderData.currentState, newerData.currentState);
+
+    return {
+      documentId,
+      schemaName,
+      comparison: {
+        olderVersion: {
+          version: olderVersion,
+          timestamp: olderData.timestamp,
+          operation: olderData.operation,
+          state: olderData.currentState
+        },
+        newerVersion: {
+          version: newerVersion,
+          timestamp: newerData.timestamp,
+          operation: newerData.operation,
+          state: newerData.currentState
+        },
+        differences: comparison.differences,
+        addedFields: comparison.addedFields,
+        removedFields: comparison.removedFields,
+        modifiedFields: comparison.modifiedFields
+      }
+    };
+  }
+
+  /**
+   * Compare two document states and identify differences
+   * @param {Object} oldState - Older document state
+   * @param {Object} newState - Newer document state
+   * @returns {Object} - Comparison result
+   */
+  compareStates(oldState, newState) {
+    const differences = [];
+    const addedFields = [];
+    const removedFields = [];
+    const modifiedFields = [];
+
+    const allFields = new Set([
+      ...Object.keys(oldState || {}),
+      ...Object.keys(newState || {})
+    ]);
+
+    for (const field of allFields) {
+      // Skip system fields
+      if (['_id', '__v', 'createdAt', 'updatedAt', '_schemaName'].includes(field)) {
+        continue;
+      }
+
+      const oldValue = oldState[field];
+      const newValue = newState[field];
+
+      if (!(field in oldState)) {
+        // Field was added
+        addedFields.push({
+          field,
+          value: newValue
+        });
+        differences.push({
+          type: 'added',
+          field,
+          value: newValue
+        });
+      } else if (!(field in newState)) {
+        // Field was removed
+        removedFields.push({
+          field,
+          value: oldValue
+        });
+        differences.push({
+          type: 'removed',
+          field,
+          value: oldValue
+        });
+      } else if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+        // Field was modified
+        modifiedFields.push({
+          field,
+          oldValue,
+          newValue
+        });
+        differences.push({
+          type: 'modified',
+          field,
+          oldValue,
+          newValue
+        });
+      }
+    }
+
+    return {
+      differences,
+      addedFields,
+      removedFields,
+      modifiedFields,
+      totalChanges: differences.length
+    };
+  }
+
+  /**
+   * Bulk revert multiple documents
+   * @param {Array} documents - Array of documents to revert
+   * @param {Object} auditContext - Audit context for the revert operation
+   * @returns {Promise<Object>} - Bulk revert results
+   */
+  async bulkRevertDocuments(documents, auditContext) {
+    console.log(`🔄 Starting bulk revert of ${documents.length} documents`);
+
+    const results = [];
+    const errors = [];
+
+    for (const doc of documents) {
+      try {
+        const { documentId, schemaName, version, reason } = doc;
+
+        if (!documentId || !schemaName || !version) {
+          throw new Error('Missing required fields: documentId, schemaName, or version');
+        }
+
+        const revertOptions = {
+          ...auditContext,
+          reason: reason || auditContext.metadata?.reason || 'Bulk revert operation'
+        };
+
+        const result = await this.revertToVersion(documentId, schemaName, version, revertOptions);
+        
+        results.push({
+          documentId,
+          schemaName,
+          version,
+          success: true,
+          result
+        });
+
+        console.log(`✅ Successfully reverted document ${documentId} to version ${version}`);
+      } catch (error) {
+        console.error(`❌ Failed to revert document ${doc.documentId}:`, error.message);
+        
+        errors.push({
+          documentId: doc.documentId,
+          schemaName: doc.schemaName,
+          version: doc.version,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+
+    const summary = {
+      totalDocuments: documents.length,
+      successful: results.length,
+      failed: errors.length,
+      results,
+      errors
+    };
+
+    console.log(`📊 Bulk revert completed: ${results.length} successful, ${errors.length} failed`);
+
+    return summary;
+  }
+
+  /**
+   * Get audit summary for a schema
+   * @param {string} schemaName - Schema name
+   * @param {Object} options - Query options
+   * @returns {Promise<Object>} - Audit summary
+   */
+  async getAuditSummary(schemaName, options = {}) {
+    const { timeframe = '30d' } = options;
+
+    // Calculate time range
+    let timeRange = {};
+    const now = new Date();
+    switch (timeframe) {
+      case '24h':
+        timeRange = { $gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) };
+        break;
+      case '7d':
+        timeRange = { $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) };
+        break;
+      case '30d':
+        timeRange = { $gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) };
+        break;
+      case '90d':
+        timeRange = { $gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000) };
+        break;
+      case '1y':
+        timeRange = { $gte: new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000) };
+        break;
+      default:
+        timeRange = {};
+    }
+
+    const baseQuery = { schemaName };
+    if (Object.keys(timeRange).length > 0) {
+      baseQuery.timestamp = timeRange;
+    }
+
+    // Get comprehensive summary using aggregation
+    const summary = await AuditLog.aggregate([
+      { $match: baseQuery },
+      {
+        $group: {
+          _id: null,
+          totalOperations: { $sum: 1 },
+          uniqueDocuments: { $addToSet: '$documentId' },
+          uniqueUsers: { $addToSet: '$userId' },
+          operations: {
+            $push: {
+              operation: '$operation',
+              timestamp: '$timestamp',
+              userId: '$userId'
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          totalOperations: 1,
+          uniqueDocuments: { $size: '$uniqueDocuments' },
+          uniqueUsers: { $size: '$uniqueUsers' },
+          operations: 1
+        }
+      }
+    ]);
+
+    // Get operation breakdown
+    const operationBreakdown = await AuditLog.aggregate([
+      { $match: baseQuery },
+      {
+        $group: {
+          _id: '$operation',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Get recent activity
+    const recentActivity = await AuditLog.find(baseQuery)
+      .select('operation timestamp userId documentId')
+      .sort({ timestamp: -1 })
+      .limit(10)
+      .lean();
+
+    // Get top users by activity
+    const topUsers = await AuditLog.aggregate([
+      { $match: baseQuery },
+      {
+        $group: {
+          _id: '$userId',
+          operationCount: { $sum: 1 }
+        }
+      },
+      { $sort: { operationCount: -1 } },
+      { $limit: 5 }
+    ]);
+
+    const summaryData = summary[0] || {
+      totalOperations: 0,
+      uniqueDocuments: 0,
+      uniqueUsers: 0
+    };
+
+    // Format operation breakdown
+    const operations = {};
+    operationBreakdown.forEach(op => {
+      operations[op._id] = op.count;
+    });
+
+    return {
+      schemaName,
+      timeframe,
+      summary: {
+        totalOperations: summaryData.totalOperations,
+        uniqueDocuments: summaryData.uniqueDocuments,
+        uniqueUsers: summaryData.uniqueUsers
+      },
+      operations: {
+        create: operations.create || 0,
+        update: operations.update || 0,
+        delete: operations.delete || 0
+      },
+      recentActivity,
+      topUsers,
+      generatedAt: new Date()
+    };
   }
 }
 

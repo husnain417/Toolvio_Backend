@@ -1,4 +1,4 @@
-const { Queue, Worker, QueueScheduler } = require('bullmq');
+const { Queue, Worker } = require('bullmq');
 const maintenanceProcessor = require('./processors/maintenanceProcessor');
 
 class MaintenanceQueue {
@@ -114,16 +114,9 @@ class MaintenanceQueue {
     try {
       console.log('📋 Initializing maintenance queue scheduler...');
       
-      this.scheduler = new QueueScheduler('maintenance', {
-        connection: redis
-      });
-
-      this.scheduler.on('error', (error) => {
-        console.error('❌ Maintenance scheduler error:', error);
-      });
-
-      console.log('✅ Maintenance scheduler initialized');
-      return this.scheduler;
+      // QueueScheduler temporarily disabled due to BullMQ version compatibility
+      console.log('⚠️  Maintenance QueueScheduler temporarily disabled');
+      return null;
       
     } catch (error) {
       console.error('❌ Failed to initialize maintenance scheduler:', error);

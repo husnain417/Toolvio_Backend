@@ -1,3 +1,15 @@
+// Load local configuration first
+try {
+  const localConfig = require('../config.local.js');
+  Object.keys(localConfig).forEach(key => {
+    if (!process.env[key]) {
+      process.env[key] = localConfig[key];
+    }
+  });
+} catch (error) {
+  console.log('⚠️  No local config found, using environment variables');
+}
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -12,6 +24,12 @@ const systemRoutes = require('./routes/systemRoutes');
 const authRoutes = require('./routes/authRoutes'); // Add authentication routes
 const tenantRoutes = require('./routes/tenantRoutes'); // Add tenant management routes
 const queueRoutes = require('./routes/queueRoutes'); // Add queue management routes
+const syncRoutes = require('./routes/syncRoutes'); // Add offline sync routes
+
+// Milestone 4: Versioning & Extensibility Routes
+const schemaVersionRoutes = require('./routes/schemaVersions'); // Add schema version routes
+const migrationRoutes = require('./routes/migrations'); // Add migration routes
+const discoveryRoutes = require('./routes/discovery'); // Add discovery routes
 const SchemaService = require('./services/SchemaService');
 const ChangeStreamService = require('./services/ChangeStreamService'); // Add change stream service
 const QueueService = require('./services/QueueService'); // Add queue service
@@ -102,7 +120,7 @@ app.use(helmet());
 
 // Enhanced CORS configuration for Swagger UI
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5000', 'http://127.0.0.1:3000', 'http://127.0.0.1:5000'],
+  origin: true, // Allow all origins in development
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -112,7 +130,46 @@ app.use(cors({
 // Handle preflight requests
 app.options('*', cors());
 
+// Additional CORS headers for Swagger UI
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  next();
+});
+
 app.use(morgan('combined'));
+
+// Health check endpoints (before body-parser middleware)
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
+// Ready check endpoint for Kubernetes
+app.get('/ready', (req, res) => {
+  // Check if all critical services are ready
+  const isReady = true; // Add your readiness checks here
+  
+  if (isReady) {
+    res.status(200).json({
+      status: 'ready',
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    res.status(503).json({
+      status: 'not ready',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Body parsing middleware (after health endpoints)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -135,6 +192,12 @@ app.use('/api/data', dynamicRoutes);
 app.use('/api/audit', auditRoutes); // Add audit routes
 app.use('/api/system', systemRoutes);
 app.use('/api/admin/queues', queueRoutes); // Add queue management routes
+app.use('/api/sync', syncRoutes); // Add offline sync routes
+
+// Milestone 4: Versioning & Extensibility Routes
+app.use('/api/schema-versions', schemaVersionRoutes); // Schema version management
+app.use('/api/migrations', migrationRoutes); // Schema migration management
+app.use('/api/discovery', discoveryRoutes); // Dynamic endpoint discovery
 
 // Swagger UI docs
 try {
@@ -189,7 +252,8 @@ app.get('/', (req, res) => {
       'Complete Audit Trail & Rollback',
       'Real-time Change Streams',
       'Versioned Record Snapshots',
-      'Background Job Processing with BullMQ'
+      'Background Job Processing with BullMQ',
+      'Offline Sync & Conflict Resolution'
     ],
     endpoints: {
       auth: '/api/auth',
@@ -199,6 +263,7 @@ app.get('/', (req, res) => {
       audit: '/api/audit',
       system: '/api/system',
       queues: '/api/admin/queues',
+      sync: '/api/sync',
       health: '/api/system/health'
     },
     auditFeatures: {
@@ -208,26 +273,6 @@ app.get('/', (req, res) => {
       versioning: 'Sequential version numbering for all changes',
       bulkOperations: 'Bulk revert and audit operations supported',
       backgroundProcessing: 'Asynchronous audit processing with BullMQ queues'
-    }
-  });
-});
-
-// Health check endpoint with audit service status
-app.get('/health', (req, res) => {
-  const changeStreamStatus = ChangeStreamService.getStatus();
-  
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    services: {
-      database: 'connected',
-      dynamicModels: 'initialized',
-      changeStreams: {
-        status: changeStreamStatus.isInitialized ? 'active' : 'inactive',
-        totalStreams: changeStreamStatus.totalStreams,
-        streamsDetails: changeStreamStatus.streams
-      },
-      queues: QueueService.getStatus()
     }
   });
 });
@@ -245,7 +290,8 @@ app.use('*', (req, res) => {
       '/api/data',
       '/api/audit',
       '/api/system',
-      '/api/admin/queues'
+      '/api/admin/queues',
+      '/api/sync'
     ]
   });
 });
@@ -267,6 +313,7 @@ const startServer = async () => {
     console.log('✅ Milestone 1: Schema-Driven API - COMPLETE');
     console.log('✅ Milestone 2: Audit Trail & Rollback - COMPLETE');
     console.log('✅ Background Processing: BullMQ + Redis - COMPLETE');
+    console.log('✅ Offline Sync & Conflict Resolution - COMPLETE');
     console.log('');
   });
   

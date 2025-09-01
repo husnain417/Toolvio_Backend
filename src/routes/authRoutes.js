@@ -65,7 +65,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
  *           example: "Doe"
  *         role:
  *           type: string
- *           enum: [admin, office, technician, customer]
+ *           enum: [system_admin, admin, office, technician, customer]
  *           default: customer
  *           description: User role
  *           example: "technician"
@@ -215,17 +215,249 @@ router.post('/login', authController.login);
 
 /**
  * @swagger
- * /api/auth/register:
+ * /api/auth/register-super-admin:
  *   post:
- *     summary: User registration
- *     description: Create a new user account
+ *     summary: Register the first super admin (production use)
+ *     description: Creates the first super admin user. Only works if no super admin exists in the system.
  *     tags: [Authentication]
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/RegisterRequest'
+ *             type: object
+ *             required:
+ *               - username
+ *               - email
+ *               - password
+ *               - firstName
+ *               - lastName
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: Unique username for the super admin
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: Email address for the super admin
+ *               password:
+ *                 type: string
+ *                 minLength: 8
+ *                 description: Password for the super admin
+ *               firstName:
+ *                 type: string
+ *                 description: First name of the super admin
+ *               lastName:
+ *                 type: string
+ *                 description: Last name of the super admin
+ *     responses:
+ *       201:
+ *         description: Super admin registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Super admin registered successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       type: object
+ *                       properties:
+ *                         _id:
+ *                           type: string
+ *                         username:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         firstName:
+ *                           type: string
+ *                         lastName:
+ *                           type: string
+ *                         role:
+ *                           type: string
+ *                         isSystemAdmin:
+ *                           type: boolean
+ *                     tenant:
+ *                       type: object
+ *                       properties:
+ *                         _id:
+ *                           type: string
+ *                         name:
+ *                           type: string
+ *                         domain:
+ *                           type: string
+ *                     token:
+ *                       type: string
+ *       400:
+ *         description: Bad request - validation error or super admin already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                 code:
+ *                   type: string
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/register-super-admin', authController.registerSuperAdmin);
+
+/**
+ * @swagger
+ * /api/auth/bootstrap:
+ *   post:
+ *     summary: Bootstrap system (development/testing use)
+ *     description: Creates system admin and first tenant. Master key required in production if super admin exists.
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - firstName
+ *               - lastName
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: Email address for the system admin
+ *               password:
+ *                 type: string
+ *                 minLength: 8
+ *                 description: Password for the system admin
+ *               firstName:
+ *                 type: string
+ *                 description: First name of the system admin
+ *               lastName:
+ *                 type: string
+ *                 description: Last name of the system admin
+ *               masterKey:
+ *                 type: string
+ *                 description: Master key (required in production if super admin exists)
+ *     responses:
+ *       201:
+ *         description: System bootstrapped successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: System bootstrapped successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     systemAdmin:
+ *                       type: object
+ *                       properties:
+ *                         _id:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         role:
+ *                           type: string
+ *                         isSystemAdmin:
+ *                           type: boolean
+ *                     firstTenant:
+ *                       type: object
+ *                       properties:
+ *                         _id:
+ *                           type: string
+ *                         name:
+ *                           type: string
+ *                         domain:
+ *                           type: string
+ *                     token:
+ *                       type: string
+ *                     tenantsCreated:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *       400:
+ *         description: Bad request - validation error or system already bootstrapped
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                 code:
+ *                   type: string
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/bootstrap', authController.bootstrap);
+
+/**
+ * @swagger
+ * /api/auth/register:
+ *   post:
+ *     summary: User registration
+ *     description: Create a new user account (customer or technician only)
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - email
+ *               - password
+ *               - firstName
+ *               - lastName
+ *               - role
+ *               - tenantId
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: Unique username
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: User email address
+ *               password:
+ *                 type: string
+ *                 minLength: 8
+ *                 description: User password
+ *               firstName:
+ *                 type: string
+ *                 description: User's first name
+ *               lastName:
+ *                 type: string
+ *                 description: User's last name
+ *               role:
+ *                 type: string
+ *                 enum: [customer, technician]
+ *                 description: User role (self-registration limited to these roles)
+ *               tenantId:
+ *                 type: string
+ *                 description: Tenant identifier
  *     responses:
  *       201:
  *         description: User registered successfully
@@ -234,11 +466,95 @@ router.post('/login', authController.login);
  *             schema:
  *               $ref: '#/components/schemas/AuthResponse'
  *       400:
- *         description: Invalid request data or user already exists
+ *         description: Invalid request data, user already exists, or invalid role
  *       403:
  *         description: Tenant inactive or user limit reached
  */
 router.post('/register', authController.register);
+
+/**
+ * @swagger
+ * /api/auth/create-office-user:
+ *   post:
+ *     summary: Create office user (admin only)
+ *     description: Create a new office user account. Only tenant admins can create office users.
+ *     tags: [Authentication]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - email
+ *               - password
+ *               - firstName
+ *               - lastName
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: Unique username
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: User email address
+ *               password:
+ *                 type: string
+ *                 minLength: 8
+ *                 description: User password
+ *               firstName:
+ *                 type: string
+ *                 description: User's first name
+ *               lastName:
+ *                 type: string
+ *                 description: User's last name
+ *     responses:
+ *       201:
+ *         description: Office user created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       type: object
+ *                       properties:
+ *                         _id:
+ *                           type: string
+ *                         username:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         firstName:
+ *                           type: string
+ *                         lastName:
+ *                           type: string
+ *                         role:
+ *                           type: string
+ *                           example: office
+ *                         tenantId:
+ *                           type: string
+ *                         permissions:
+ *                           type: object
+ *                 message:
+ *                   type: string
+ *                   example: Office user created successfully
+ *       400:
+ *         description: Invalid request data or user already exists
+ *       401:
+ *         description: Authentication required
+ *       403:
+ *         description: Insufficient permissions or tenant inactive
+ */
+router.post('/create-office-user', authenticate, requireRole(['admin']), authController.createOfficeUser);
 
 /**
  * @swagger

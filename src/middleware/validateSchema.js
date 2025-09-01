@@ -20,7 +20,10 @@ const schemaExists = (paramName = 'schemaName') => {
       }
 
       console.log('Getting schema:', schemaName);
-      const schema = await SchemaService.getSchemaByName(schemaName);
+      console.log('DEBUG: req.user.tenantId:', req.user?.tenantId);
+      console.log('DEBUG: req.user:', req.user);
+      const schema = await SchemaService.getSchemaByName(req.user.tenantId, schemaName);
+      console.log('Schema found:', !!schema);
       
       if (!schema) {
         console.log('ERROR: Schema not found');
