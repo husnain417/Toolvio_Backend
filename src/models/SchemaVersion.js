@@ -23,8 +23,8 @@ const SchemaVersionSchema = new mongoose.Schema({
     index: true
   },
 
-  // Full schema definition
-  schema: {
+  // Full schema definition (stored as JSON)
+  jsonSchema: {
     type: mongoose.Schema.Types.Mixed,
     required: true
   },
@@ -126,7 +126,7 @@ SchemaVersionSchema.statics.getActiveVersion = function(tenantId, schemaName) {
 SchemaVersionSchema.statics.getVersionHistory = function(tenantId, schemaName) {
   return this.find({ tenantId, schemaName })
     .sort({ version: -1 })
-    .select('-schema') // Exclude full schema for performance
+    .select('-jsonSchema') // Exclude full schema for performance
     .lean();
 };
 

@@ -1,5 +1,120 @@
 # 🚀 Craftsman Dynamic Backend Platform - Complete Implementation Status
 
+## 🔄 Updated Implementation Summary (current)
+
+This section reflects the latest, verified implementation across schema management, audit trail, offline sync, versioning, discovery, roles/permissions, tenant management, and deployment. It supersedes any older route shapes listed further below.
+
+### Core Architecture
+- Multi-tenant, schema-driven Express.js backend (MongoDB + Change Streams)
+- Background processing with BullMQ + Redis
+- JWT auth with role-based permissions and tenant isolation
+
+### Roles and System Flow
+- System Admin (super_admin)
+  - Creates/manages tenants; full platform visibility
+  - Can view discovery/openapi for any tenant; bypasses tenant checks
+- Tenant Admin (admin)
+  - Manages schemas, users, data, audit, sync for their tenant
+  - Can activate schema versions, run audit cleanup/rollback
+- Office
+  - CRUD on business data (customers, jobs, invoices), bulk ops, delete allowed
+  - No schema/user admin
+- Technician
+  - Read/limited update on assigned work; participates in offline sync
+- Customer
+  - Limited, scoped read via portal/app
+
+JWT includes: userId, role, tenantId, isSystemAdmin, and effective permissions derived at request time.
+
+### Schema Management (Dynamic CRUD)
+- Define schemas in JSON Schema; dynamic models and endpoints generated
+- Routes (tenant-agnostic, tenant taken from JWT):
+  - GET /api/data/:schemaName
+  - GET /api/data/:schemaName/:id
+  - POST /api/data/:schemaName
+  - PUT /api/data/:schemaName/:id
+  - PATCH /api/data/:schemaName/:id
+  - DELETE /api/data/:schemaName/:id
+  - POST /api/data/:schemaName/bulk
+  - GET /api/data/:schemaName/count
+  - GET /api/data/:schemaName/search
+  - GET /api/data/:schemaName/stats
+
+### Audit Trail & Rollback
+- MongoDB Change Streams + API middleware both log audits; deduplication prevents duplicates in sync feeds
+- TenantId propagation fixed end-to-end (API and change stream audits)
+- Tombstones for deletes: isTombstone: true with tombstoneData
+- Key Routes:
+  - GET /api/audit/:schemaName/:documentId/history
+  - GET /api/audit/:schemaName/history
+  - GET /api/audit/:schemaName/:documentId/versions
+  - GET /api/audit/:schemaName/:documentId/versions/:version
+  - GET /api/audit/:schemaName/:documentId/compare?version1=&version2=
+  - GET /api/audit/:schemaName/stats
+  - GET /api/audit/:schemaName/summary
+  - POST /api/audit/:schemaName/:documentId/revert/:version (requires audit.rollback)
+  - POST /api/audit/:schemaName/bulk-revert (requires audit.rollback)
+  - POST /api/audit/:schemaName/cleanup (requires audit.admin)
+
+### Offline Sync
+- Incremental change feed sourced from AuditLog; deduped (api + changeStream collapsed)
+- Tombstones delivered for deletes
+- Routes:
+  - GET /api/sync/changes?since={globalVersion}&deviceId={id} (generic)
+  - GET /api/sync/:schema/changes?since={v}&deviceId={id} (schema alias)
+  - POST /api/sync/batch (client changes upload)
+  - POST /api/sync/:schema/changes (alias for batch)
+  - GET /api/sync/state, POST /api/sync/state (device state)
+  - GET /api/sync/conflicts, GET /api/sync/health
+
+### Schema Version Registry (Milestone 4.1)
+- Model: SchemaVersion { tenantId, schemaName, version, jsonSchema, changelog, isActive, compatibilityLevel, previousVersion, metadata }
+- Service auto-bumps version based on compatibility analysis; accepts jsonSchema
+- Routes:
+  - GET /api/schema-versions/:tenant/:schema (history)
+  - POST /api/schema-versions/:tenant/:schema (create; { schema, changelog, activate })
+  - PUT /api/schema-versions/:tenant/:schema/activate/:version
+  - GET /api/schema-versions/:tenant/:schema/diff/:version1/:version2
+  - GET /api/schema-versions/:tenant/:schema/current
+
+### Discovery (Milestone 4.3)
+- Public:
+  - GET /api/discovery/capabilities (no auth)
+- Tenant-scoped (auth):
+  - GET /api/discovery/:tenant/schemas
+  - GET /api/discovery/:tenant/endpoints
+  - GET /api/discovery/:tenant/openapi
+  - GET /api/discovery/:tenant/schema/:name/meta
+  - GET /api/discovery/:tenant/schema/:name/typescript
+  - GET /api/discovery/:tenant/docs
+Notes: Discovery falls back to Schema model if SchemaService methods are absent; uses SchemaVersion.jsonSchema when present.
+
+### Queue System (BullMQ + Redis)
+- Queue names aligned; prefix fixed; workers process jobs correctly
+- Admin:
+  - GET /api/admin/queues
+  - GET /api/admin/queues/:queueName/jobs
+  - GET /api/admin/queues/:queueName/failed
+  - POST /api/admin/queues/:queueName/retry-failed
+  - GET /api/admin/queues/stats
+
+### Tenant Management
+- Create tenant + admin: POST /api/tenants (controller orchestrates tenant and admin user creation)
+- List/get/update/delete/toggle status endpoints implemented under /api/tenants
+- JWT tenant checks enforced by middleware; system_admin bypasses
+
+### Permissions (effective defaults)
+- system_admin: full access; audit.admin true
+- admin: schemas/data/audit/users/jobs/customers/invoices/reports/sync per-tenant; audit.admin true
+- office: data CRUD incl. delete; jobs.delete true; audit.read; no rollback/admin
+- technician: limited read/update; no deletes
+- customer: limited read
+
+### Deployment
+- Dockerfile (multi-stage), docker-compose, health endpoints, graceful shutdown, Redis + Mongo services; Nginx reverse proxy config
+
+— End of updated summary —
+
 ## 📊 Overall Implementation Status: **100% COMPLETE** ✅
 
 The Craftsman Dynamic Backend Platform has been **fully implemented** with all 4 milestones completed. This document provides a comprehensive overview of what has been implemented, including all routes, endpoints, and their functionality.

@@ -824,18 +824,40 @@ env
 
 ## 🔄 Offline Sync & Conflict Resolution
 
-### 48. Get Initial Sync State (Technician)
-**GET** `{{baseUrl}}/api/sync/job/status`
-**Headers**: `Authorization: Bearer {{technicianToken}}`
-**Expected**: 200 OK with sync status
+This suite validates full offline capabilities: initial/full sync, incremental changes, client uploads, conflict handling, deduplication, deletes (tombstones), pagination, schema filtering, role restrictions, and health.
 
-### 49. Get Changes Since Timestamp (Technician)
+Prereqs
+- Set `{{deviceId}}` (e.g., `technician-device-001`).
+- Ensure at least 2 job records exist for the tenant.
+
+### 48. Register/Update Device Sync State (Technician)
+Purpose: initialize device state and client metadata.
+**POST** `{{baseUrl}}/api/sync/state`
+**Headers**: `Authorization: Bearer {{technicianToken}}`
+```json
+{
+  "deviceId": "{{deviceId}}",
+  "appVersion": "1.0.0",
+  "platform": "android",
+  "syncIntervalMinutes": 5,
+  "connectionType": "wifi",
+  "networkQuality": "good",
+  "preferences": { "conflictResolution": "smart_merge" }
+}
+```
+**Expected**: 200 OK with saved sync state and `clientInfo.lastSyncAt`.
+
+### 49. Initial Full Change Feed (Technician)
+Purpose: bootstrap the device with all historical changes.
 **GET** `{{baseUrl}}/api/sync/job/changes?since=0&deviceId={{deviceId}}`
 **Headers**: `Authorization: Bearer {{technicianToken}}`
-**Expected**: 200 OK with all job records (initial sync)
-**Action**: Save `data.timestamp` to `{{lastSyncTimestamp}}`
+**Expected**: 200 OK with `data.changes` array and `data.nextVersion`.
+Notes:
+- Changes are deduped (api + changeStream collapsed to one).
+- Save `data.nextVersion` to `{{lastSyncVersion}}`.
 
-### 50. Make Changes While "Offline" (Office Manager)
+### 50. Simulate Server-side Updates While Client Is Offline (Office)
+Purpose: create divergence.
 **PUT** `{{baseUrl}}/api/data/job/{{jobId}}`
 **Headers**: `Authorization: Bearer {{officeToken}}`
 ```json
@@ -844,41 +866,79 @@ env
   "description": "Kitchen Sink Repair - URGENT: Customer called multiple times"
 }
 ```
-**Expected**: 200 OK with updated record
+**Expected**: 200 OK.
 
-### 51. Get Incremental Changes (Technician)
-**GET** `{{baseUrl}}/api/sync/job/changes?since={{lastSyncTimestamp}}&deviceId={{deviceId}}`
+### 51. Incremental Changes (Technician)
+Purpose: fetch only new changes after last cursor.
+**GET** `{{baseUrl}}/api/sync/job/changes?since={{lastSyncVersion}}&deviceId={{deviceId}}`
 **Headers**: `Authorization: Bearer {{technicianToken}}`
-**Expected**: 200 OK with only changes since last sync
+**Expected**: 200 OK with only recent changes; update `{{lastSyncVersion}}` with returned `nextVersion`.
 
-### 52. Submit Client Changes (Technician)
+### 52. Client Batch Upload (Technician)
+Purpose: send client-side mutations.
 **POST** `{{baseUrl}}/api/sync/job/changes`
 **Headers**: `Authorization: Bearer {{technicianToken}}`
 ```json
 {
   "deviceId": "{{deviceId}}",
-  "clientTimestamp": 1693497600000,
+  "clientSyncVersion": {{lastSyncVersion}},
   "changes": [
     {
       "operation": "update",
-      "id": "{{jobId}}",
-      "data": {
-        "status": "completed",
-        "completedDate": "2025-08-31T15:30:00Z",
-        "laborHours": 3.0
-      }
+      "schema": "job",
+      "recordId": "{{jobId}}",
+      "clientTimestamp": 1756809600000,
+      "data": { "status": "completed", "completedDate": "2025-09-02T15:30:00Z", "laborHours": 3.0 }
     }
   ]
 }
 ```
-**Expected**: 200 OK with sync results
+**Expected**: 200 OK with per-change results; server assigns new sync versions.
 
-### 53. Test Customer Sync Restrictions (Should Be Limited)
+### 53. Deletion Propagation (Office → Technician)
+Purpose: verify tombstones are delivered.
+1) Delete on server: **DELETE** `{{baseUrl}}/api/data/job/{{jobIdToDelete}}` (Office)
+2) Client fetch: **GET** `{{baseUrl}}/api/sync/job/changes?since={{lastSyncVersion}}&deviceId={{deviceId}}`
+**Expected**: one change with `operation: "delete"`, `isTombstone: true`.
+
+### 54. Conflict Scenario (Simulated)
+Purpose: concurrent updates from office and technician.
+1) Office updates record A.
+2) Technician (without pulling) sends update on same fields via step 52.
+**Expected**:
+- If resolver can auto-merge: 200 with merged server state.
+- If not: change flagged; appears in `GET {{baseUrl}}/api/sync/conflicts`.
+
+### 55. Schema Filter & Pagination
+Purpose: limit feed and paginate.
+**GET** `{{baseUrl}}/api/sync/changes?since={{lastSyncVersion}}&deviceId={{deviceId}}&schemas=job&limit=50`
+**Headers**: `Authorization: Bearer {{technicianToken}}`
+**Expected**: 200 OK, `changes.length <= 50`, `hasMore` true if more available.
+
+### 56. Role Restrictions
+Purpose: enforce tenant/role scoping.
 **GET** `{{baseUrl}}/api/sync/job/changes?since=0&deviceId=customer-device`
 **Headers**: `Authorization: Bearer {{customerToken}}`
-**Expected**: 200 OK with only jobs related to this customer
+**Expected**: 200 OK but limited to customer-related jobs only.
 
----
+### 57. Device State Readback
+**GET** `{{baseUrl}}/api/sync/job/status?deviceId={{deviceId}}`
+**Headers**: `Authorization: Bearer {{technicianToken}}`
+**Expected**: 200 OK with client state, last sync stats.
+
+### 58. Health & Diagnostics
+**GET** `{{baseUrl}}/api/sync/health`
+**Headers**: `Authorization: Bearer {{tenantAdminToken}}`
+**Expected**: 200 OK with activeClients, global/tenant versions, recent syncs.
+
+### 59. Error Handling Checks
+- Missing deviceId: expect 400.
+- since too far behind (gap > threshold): expect `requiresFullSync: true`.
+- Oversized batch (>1000 changes): expect 400.
+
+Tips
+- Always use returned `nextVersion` as the next `since`.
+- For initial device build, combine snapshot `GET /api/data/job` (to render current state quickly) and run `GET /api/sync/job/changes?since=0` to catch historical changes.
 
 ## 📋 Schema Versioning & Migrations
 

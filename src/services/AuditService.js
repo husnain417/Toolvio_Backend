@@ -23,6 +23,8 @@ class AuditService {
         userId,
         userAgent,
         ipAddress,
+        isTombstone,
+        tombstoneData,
         tenantId,
         metadata = {}
       } = auditData;
@@ -80,7 +82,10 @@ class AuditService {
         tenantSyncVersion: tenantVersion,
         schemaSyncVersion: schemaVersion,
         tenantId: tenantId || 'default',
-        syncStatus: 'pending'
+        syncStatus: 'pending',
+        // Tombstone fields
+        isTombstone: operation === 'delete' ? true : (isTombstone === true),
+        tombstoneData: operation === 'delete' ? (tombstoneData || { originalId: documentId, deletedAt: new Date(), deletedBy: userId || null }) : tombstoneData
       });
 
       const savedAuditLog = await auditLog.save();
@@ -472,15 +477,21 @@ class AuditService {
   async cleanupOldAuditLogs(options = {}) {
     const {
       olderThan = 365, // days
+      newerThanHours,   // if provided, delete logs newer than this many hours (e.g., last 24h)
       schemaName,
       operation,
       dryRun = false
     } = options;
 
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - olderThan);
-
-    const query = { timestamp: { $lt: cutoffDate } };
+    let query = {};
+    if (typeof newerThanHours === 'number' && newerThanHours > 0) {
+      const newerCutoff = new Date(Date.now() - newerThanHours * 60 * 60 * 1000);
+      query.timestamp = { $gte: newerCutoff };
+    } else {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - olderThan);
+      query.timestamp = { $lt: cutoffDate };
+    }
     if (schemaName) query.schemaName = schemaName;
     if (operation) query.operation = operation;
 

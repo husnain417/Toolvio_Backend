@@ -223,10 +223,16 @@ class AuditController {
    */
   async cleanupAuditLogs(req, res) {
     try {
-      const { olderThan = 365, schemaName, operation, dryRun = false } = req.body;
+      // Accept body or query params
+      const olderThan = req.body.olderThan ?? req.query.olderThan ?? 365;
+      const newerThanHours = req.body.newerThanHours ?? req.query.newerThanHours; // optional
+      const schemaName = req.body.schemaName ?? req.query.schemaName;
+      const operation = req.body.operation ?? req.query.operation;
+      const dryRun = req.body.dryRun ?? (req.query.dryRun === 'true');
 
       const result = await AuditService.cleanupOldAuditLogs({
         olderThan: parseInt(olderThan),
+        newerThanHours: newerThanHours !== undefined ? parseInt(newerThanHours) : undefined,
         schemaName,
         operation,
         dryRun: dryRun === true

@@ -268,4 +268,140 @@ router.get('/health', auth, async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------
+// Schema-specific aliases for compatibility with test suite
+// ------------------------------------------------------------
+
+// GET /api/sync/:schema/changes -> inject schema filter and reuse logic
+router.get('/:schema/changes', auth, async (req, res) => {
+  try {
+    const { since, deviceId, limit, includeDeleted } = req.query;
+    const schema = req.params.schema;
+    const tenantId = req.user.tenantId;
+
+    if (!since || !deviceId) {
+      return errorResponse(res, 'Missing required parameters: since and deviceId', 400);
+    }
+
+    const limitNum = limit ? parseInt(limit) : 1000;
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 10000) {
+      return errorResponse(res, 'Invalid limit parameter. Must be between 1 and 10000', 400);
+    }
+
+    const includeDeletedBool = includeDeleted !== 'false';
+
+    const options = {
+      schemas: [schema],
+      limit: limitNum,
+      includeDeleted: includeDeletedBool
+    };
+
+    const result = await syncService.getChangesSince(
+      tenantId,
+      deviceId,
+      parseInt(since),
+      options
+    );
+
+    if (result.requiresFullSync) {
+      return successResponse(res, {
+        requiresFullSync: true,
+        reason: result.reason,
+        message: 'Client requires full sync'
+      }, 'Success');
+    }
+
+    if (!result.success) {
+      return errorResponse(res, result.error || 'Failed to get changes', 500);
+    }
+
+    return successResponse(res, result, 'Changes retrieved successfully');
+  } catch (error) {
+    console.error('Error in /sync/:schema/changes:', error);
+    return errorResponse(res, 'Failed to retrieve changes', 500);
+  }
+});
+
+// POST /api/sync/:schema/changes -> alias for batch submit
+router.post('/:schema/changes', auth, async (req, res) => {
+  try {
+    const { deviceId, clientSyncVersion, changes, conflictResolution } = req.body;
+    const tenantId = req.user.tenantId;
+
+    if (!deviceId || clientSyncVersion === undefined || clientSyncVersion === null || !changes || !Array.isArray(changes)) {
+      return errorResponse(res, 'Missing required parameters: deviceId, clientSyncVersion, and changes array', 400);
+    }
+
+    if (changes.length === 0) {
+      return errorResponse(res, 'Changes array cannot be empty', 400);
+    }
+
+    if (changes.length > 1000) {
+      return errorResponse(res, 'Too many changes. Maximum allowed is 1000', 400);
+    }
+
+    // Optional: enforce that change.schema matches req.params.schema, otherwise reject or normalize
+    const schema = req.params.schema;
+    for (const change of changes) {
+      if (!change.operation || !change.schema || !change.data || !change.clientTimestamp) {
+        return errorResponse(res, 'Invalid change object. Missing required fields', 400);
+      }
+      if (!['create', 'update', 'delete'].includes(change.operation)) {
+        return errorResponse(res, 'Invalid operation type', 400);
+      }
+      if (change.operation !== 'create' && !change.recordId) {
+        return errorResponse(res, 'Record ID required for update and delete operations', 400);
+      }
+      // If schema mismatch, normalize to path schema
+      if (change.schema !== schema) {
+        change.schema = schema;
+      }
+    }
+
+    const options = {
+      conflictResolution: conflictResolution || { strategy: 'smart_merge' }
+    };
+
+    const result = await syncService.processClientChanges(
+      tenantId,
+      deviceId,
+      changes,
+      options
+    );
+
+    if (!result.success) {
+      return errorResponse(res, result.error || 'Failed to process client changes', 500);
+    }
+
+    return successResponse(res, result, 'Changes processed successfully');
+  } catch (error) {
+    console.error('Error in /sync/:schema/changes POST:', error);
+    return errorResponse(res, 'Failed to process client changes', 500);
+  }
+});
+
+// GET /api/sync/:schema/status -> alias to /state
+router.get('/:schema/status', auth, async (req, res) => {
+  try {
+    const { deviceId } = req.query;
+    const tenantId = req.user.tenantId;
+
+    if (!deviceId) {
+      return errorResponse(res, 'Missing deviceId parameter', 400);
+    }
+
+    const ClientSyncState = require('../models/ClientSyncState');
+    const syncState = await ClientSyncState.findOne({ deviceId, tenantId });
+
+    if (!syncState) {
+      return errorResponse(res, 'Sync state not found for this device', 404);
+    }
+
+    return successResponse(res, syncState, 'Sync state retrieved successfully');
+  } catch (error) {
+    console.error('Error in /sync/:schema/status:', error);
+    return errorResponse(res, 'Failed to retrieve sync state', 500);
+  }
+});
+
 module.exports = router;

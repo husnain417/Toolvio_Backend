@@ -157,18 +157,42 @@ class SyncService {
       }
       
       const AuditLog = require('../models/AuditLog');
-      const changes = await AuditLog.find(query)
+      const rawChanges = await AuditLog.find(query)
         .sort({ globalSyncVersion: 1 })
         .limit(limit)
         .lean();
       
+      // Collapse dual-source duplicates (api + changeStream for the same operation)
+      const dedupedMap = new Map();
+      for (const change of rawChanges) {
+        const ts = new Date(change.timestamp).getTime();
+        const bucket = Math.floor(ts / 1000); // 1s bucket is enough to pair api+changeStream
+        const key = `${change.documentId}:${change.operation}:${bucket}`;
+
+        const existing = dedupedMap.get(key);
+        if (!existing) {
+          dedupedMap.set(key, change);
+          continue;
+        }
+
+        // Prefer changeStream over api (database truth) if both exist
+        const existingSource = existing?.metadata?.source || 'unknown';
+        const newSource = change?.metadata?.source || 'unknown';
+        if (existingSource === 'api' && newSource === 'changeStream') {
+          dedupedMap.set(key, change);
+        }
+        // else keep existing
+      }
+
+      const changes = Array.from(dedupedMap.values());
+
       const nextVersion = await SyncVersion.getCurrentVersion('global', 'global');
       
       return {
         success: true,
         changes: changes,
         nextVersion: nextVersion,
-        hasMore: changes.length === limit
+        hasMore: rawChanges.length === limit
       };
       
     } catch (error) {

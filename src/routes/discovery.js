@@ -110,7 +110,17 @@ function generateDocumentationExamples(endpoints) {
   return examples;
 }
 
-// Apply authentication and tenant access to all routes
+// Public platform capabilities (no auth required)
+router.get('/capabilities', async (req, res) => {
+  try {
+    const capabilities = await DiscoveryService.getAPICapabilities();
+    successResponse(res, capabilities, 'Platform capabilities retrieved successfully');
+  } catch (error) {
+    errorResponse(res, error.message, 500);
+  }
+});
+
+// Apply authentication and tenant access to the remaining routes
 router.use(authenticate);
 router.use(requireTenantAccess);
 
@@ -212,18 +222,7 @@ router.get('/:tenant/openapi',
   }
 );
 
-// Get platform capabilities
-router.get('/capabilities', 
-  authorize('schemas', 'read'),
-  async (req, res) => {
-    try {
-      const capabilities = await DiscoveryService.getAPICapabilities();
-      successResponse(res, capabilities, 'Platform capabilities retrieved successfully');
-    } catch (error) {
-      errorResponse(res, error.message, 500);
-    }
-  }
-);
+// (moved above) Public capabilities route
 
 // Get schema metadata
 router.get('/:tenant/schema/:name/meta', 

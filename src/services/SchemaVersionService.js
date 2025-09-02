@@ -35,7 +35,7 @@ class SchemaVersionService {
       let metadata = {};
       
       if (currentVersion) {
-        const compatibility = this.checkSchemaCompatibility(currentVersion.schema, newSchema);
+        const compatibility = this.checkSchemaCompatibility(currentVersion.jsonSchema || currentVersion.schema, newSchema);
         compatibilityLevel = compatibility.level;
         metadata = compatibility.metadata;
       }
@@ -45,7 +45,7 @@ class SchemaVersionService {
         tenantId,
         schemaName,
         version: newVersion,
-        schema: newSchema,
+        jsonSchema: newSchema,
         changelog,
         createdBy: userId,
         isActive: options.activate || false,
@@ -94,7 +94,7 @@ class SchemaVersionService {
 
       // Optionally exclude schema for performance
       if (!includeSchema) {
-        versionsQuery = versionsQuery.select('-schema');
+        versionsQuery = versionsQuery.select('-jsonSchema');
       }
 
       const versions = await versionsQuery.lean();

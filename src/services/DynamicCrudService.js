@@ -278,6 +278,13 @@ class DynamicCrudService {
           userId: auditContext.userId,
           userAgent: auditContext.userAgent,
           ipAddress: auditContext.ipAddress,
+          // Mark as tombstone for sync consumers
+          isTombstone: true,
+          tombstoneData: {
+            originalId: recordId,
+            deletedAt: new Date(),
+            deletedBy: auditContext.userId || null
+          },
           tenantId: auditContext.tenantId, // CRITICAL: Pass tenantId from audit context
           metadata: {
             source: 'api',

@@ -33,7 +33,13 @@ class DiscoveryService {
   async getAvailableSchemas(tenantId, userRole) {
     try {
       // Get all schemas for the tenant
-      const schemas = await SchemaService.getSchemas(tenantId);
+      let schemas;
+      if (typeof SchemaService.getSchemas === 'function') {
+        schemas = await SchemaService.getSchemas(tenantId);
+      } else {
+        const SchemaModel = require('../models/Schema');
+        schemas = await SchemaModel.find({ tenantId, isActive: true }).lean();
+      }
       
       // Filter schemas based on user role and permissions
       const availableSchemas = schemas.filter(schema => {
@@ -59,9 +65,9 @@ class DiscoveryService {
               createdAt: schema.createdAt,
               updatedAt: schema.updatedAt,
               permissions: schema.permissions || {},
-              fields: activeVersion ? Object.keys(activeVersion.schema.properties || {}) : [],
-              requiredFields: activeVersion ? (activeVersion.schema.required || []) : [],
-              fieldCount: activeVersion ? Object.keys(activeVersion.schema.properties || {}).length : 0
+              fields: activeVersion ? Object.keys((activeVersion.jsonSchema || activeVersion.schema || {}).properties || {}) : [],
+              requiredFields: activeVersion ? ((activeVersion.jsonSchema || activeVersion.schema || {}).required || []) : [],
+              fieldCount: activeVersion ? Object.keys((activeVersion.jsonSchema || activeVersion.schema || {}).properties || {}).length : 0
             };
           } catch (error) {
             console.error(`Error getting version for schema ${schema.name}:`, error);
@@ -102,8 +108,14 @@ class DiscoveryService {
    */
   async getSchemaEndpoints(tenantId, schemaName) {
     try {
-      // Get schema information
-      const schema = await SchemaService.getSchema(tenantId, schemaName);
+      // Get schema information (fallback if SchemaService lacks getSchema)
+      let schema;
+      if (typeof SchemaService.getSchema === 'function') {
+        schema = await SchemaService.getSchema(tenantId, schemaName);
+      } else {
+        const SchemaModel = require('../models/Schema');
+        schema = await SchemaModel.findOne({ tenantId, name: schemaName, isActive: true }).lean();
+      }
       if (!schema) {
         throw new Error(`Schema '${schemaName}' not found`);
       }
@@ -201,7 +213,7 @@ class DiscoveryService {
             request: {
               method: 'POST',
               url: `/api/${tenantId}/${schemaName}`,
-              body: this.generateExampleData(activeVersion.schema)
+              body: this.generateExampleData((activeVersion.jsonSchema || activeVersion.schema))
             },
             response: {
               success: true,
@@ -221,7 +233,7 @@ class DiscoveryService {
             body: {
               description: 'Updated document data',
               required: true,
-              schema: activeVersion.schema
+              schema: (activeVersion.jsonSchema || activeVersion.schema)
             }
           },
           responses: {

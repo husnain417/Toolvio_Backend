@@ -58,6 +58,8 @@ async function processAuditCreate(data) {
     userId,
     userAgent,
     ipAddress,
+    isTombstone,
+    tombstoneData,
     tenantId,
     metadata = {}
   } = data;
@@ -78,6 +80,8 @@ async function processAuditCreate(data) {
     userId,
     userAgent,
     ipAddress,
+    isTombstone: isTombstone === true,
+    tombstoneData,
     tenantId, // CRITICAL: Pass tenantId from job data
     metadata: {
       ...metadata,
